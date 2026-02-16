@@ -1,4 +1,4 @@
-# Health Command Center - Tapio's Personal Health Dashboard
+# Health Command Center - Personal Health Dashboard
 
 ## Vision
 A comprehensive health monitoring and exercise planning system that:
@@ -257,4 +257,4 @@ requests
 
 ---
 
-*Designed by Clawdia 🦞 for Tapio — Let's optimize!*
+*Designed by Clawdia 🦞 for Your Health — Let's optimize!*
