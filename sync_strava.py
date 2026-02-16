@@ -42,13 +42,29 @@ def sync_strava_to_influxdb():
     
     print(f"Syncing {len(activities)} activities to InfluxDB...")
     
-    # Get existing Strava IDs from InfluxDB to avoid duplicates
+    # Get existing workout dates from InfluxDB to avoid duplicates
     query_api = influxdb.query_api()
-    # Query all measurements that might have workouts
-    existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -30d) |> filter(fn: (r) => r._measurement == "workouts" or r._measurement =~ /workouts_/) |> keep(columns: ["strava_id"])'
+    # Query all workouts - returns list of DataFrames
+    existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -30d) |> filter(fn: (r) => r._measurement == "workouts")'
     try:
-        existing_df = query_api.query_data_frame(existing_query)
-        existing_ids = set(existing_df['strava_id'].dropna().astype(str)) if not existing_df.empty else set()
+        result = query_api.query_data_frame(existing_query)
+        existing_dates = set()
+        if isinstance(result, list):
+            for df in result:
+                if hasattr(df, 'columns') and '_value' in df.columns and 'date' in df.get('_value', []):
+                    # Get unique dates from the 'date' tag
+                    pass
+                # Check for date in the dataframe
+                for col in ['date', '_value']:
+                    if col in df.columns:
+                        existing_dates.update(df[col].dropna().astype(str).unique())
+        elif hasattr(result, 'columns'):
+            for col in result.columns:
+                existing_dates.update(result[col].dropna().astype(str).unique())
+        # Filter to look like dates (YYYY-MM-DD)
+        existing_dates = {d for d in existing_dates if d and '-' in d and len(str(d)) == 10}
+        print(f"Found {len(existing_dates)} existing workout dates: {list(existing_dates)[:5]}...")
+        existing_ids = existing_dates  # Use dates as the dedup key
     except Exception as e:
         print(f"Query error: {e}")
         existing_ids = set()
@@ -58,19 +74,21 @@ def sync_strava_to_influxdb():
     synced = 0
     skipped = 0
     for activity in activities:
-        strava_id = str(activity.get("id", ""))
+        date = activity.get("date", "")
         
-        # Skip if already exists
-        if strava_id in existing_ids:
+        # Skip if already exists (by date)
+        if date in existing_ids:
             skipped += 1
             continue
             
         try:
+            strava_id = str(activity.get("id", ""))
+            date = activity.get("date", "")
             # Use Strava ID as part of measurement for idempotent writes
             point = Point("workouts")\
                 .tag("type", activity.get("type", "Unknown"))\
-                .tag("strava_id", strava_id)\
-                .field("date", activity.get("date", ""))\
+                .tag("date", date)\
+                .field("strava_id", strava_id)\
                 .field("duration", activity.get("duration", 0))\
                 .field("distance", activity.get("distance", 0))\
                 .field("elevation_gain", activity.get("elevation_gain", 0))\
