@@ -42,12 +42,32 @@ def sync_strava_to_influxdb():
     
     print(f"Syncing {len(activities)} activities to InfluxDB...")
     
+    # Get existing Strava IDs from InfluxDB to avoid duplicates
+    query_api = influxdb.query_api()
+    existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -30d) |> filter(fn: (r) => r._measurement == "workouts") |> keep(columns: ["strava_id"])'
+    try:
+        existing_df = query_api.query_data_frame(existing_query)
+        existing_ids = set(existing_df['strava_id'].dropna().astype(str)) if not existing_df.empty else set()
+    except:
+        existing_ids = set()
+    
+    print(f"Found {len(existing_ids)} existing workouts in InfluxDB")
+    
     synced = 0
+    skipped = 0
     for activity in activities:
+        strava_id = str(activity.get("id", ""))
+        
+        # Skip if already exists
+        if strava_id in existing_ids:
+            skipped += 1
+            continue
+            
         try:
-            point = Point("workouts")\
+            # Use Strava ID as part of measurement for idempotent writes
+            point = Point(f"workouts_{strava_id}")\
                 .tag("type", activity.get("type", "Unknown"))\
-                .tag("strava_id", str(activity.get("id", "")))\
+                .tag("strava_id", strava_id)\
                 .field("date", activity.get("date", ""))\
                 .field("duration", activity.get("duration", 0))\
                 .field("distance", activity.get("distance", 0))\
@@ -58,11 +78,12 @@ def sync_strava_to_influxdb():
                 .field("name", activity.get("name", ""))
             
             write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            existing_ids.add(strava_id)  # Add to avoid duplicates in same run
             synced += 1
         except Exception as e:
             print(f"Error syncing activity {activity.get('id')}: {e}")
     
-    print(f"Synced {synced}/{len(activities)} activities")
+    print(f"Synced {synced} new, skipped {skipped} existing")
     return True
 
 if __name__ == "__main__":
