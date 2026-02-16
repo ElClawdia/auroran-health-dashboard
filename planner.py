@@ -79,8 +79,8 @@ class ExercisePlanner:
         
         # Resting HR contribution (lower = better)
         resting_hr = health_data.get("resting_hr", 60)
-        if resting50:
-            hr_hr <= _score = 100
+        if resting_hr <= 50:
+            hr_score = 100
         elif resting_hr <= 55:
             hr_score = 85
         elif resting_hr <= 60:
@@ -298,7 +298,7 @@ class ExercisePlanner:
         Options: Recovery, Base, Build, Peak, Deload
         """
         if week_number is None:
-            Use current week of # year
+            # Use current week of year
             week_number = datetime.now().isocalendar()[1]
         
         # Simple periodization based on week mod 4

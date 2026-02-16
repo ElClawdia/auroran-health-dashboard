@@ -1,0 +1,1 @@
+![Health Dashboard Preview](dashboard-preview.png)

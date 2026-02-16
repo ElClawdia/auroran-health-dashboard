@@ -17,6 +17,13 @@ INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'health')
 SUUNTO_CLIENT_ID = os.getenv('SUUNTO_CLIENT_ID', '')
 SUUNTO_CLIENT_SECRET = os.getenv('SUUNTO_CLIENT_SECRET', '')
 
+# Strava API Configuration
+STRAVA_ACCESS_TOKEN = os.getenv('STRAVA_ACCESS_TOKEN', '')
+
+# Garmin (no personal API - sync via Strava recommended)
+GARMIN_USERNAME = os.getenv('GARMIN_USERNAME', '')
+GARMIN_PASSWORD = os.getenv('GARMIN_PASSWORD', '')
+
 # Flask Configuration
 FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
 FLASK_PORT = int(os.getenv('PORT', 5000))

@@ -17,12 +17,15 @@ import pandas as pd
 
 # Import our modules
 from suunto_client import SuuntoClient
+from strava_client import StravaClient, MockStravaClient
 from planner import ExercisePlanner
 
 app = Flask(__name__)
 
 # Configuration
 from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
+from config import SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET
+from config import STRAVA_ACCESS_TOKEN
 
 # Initialize InfluxDB client with fallback
 influx_client = None
@@ -52,6 +55,7 @@ if INFLUXDB_TOKEN:
 
 # Initialize modules
 suunto = SuuntoClient(SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET)
+strava = StravaClient(STRAVA_ACCESS_TOKEN) if STRAVA_ACCESS_TOKEN else MockStravaClient()
 planner = ExercisePlanner()
 
 # Generate mock data for demo mode
@@ -173,14 +177,13 @@ def health_history():
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: -{days}d)
           |> filter(fn: (r) => r._measurement == "daily_health")
-          |> pivot(rowKey: "_time", columnKey: "_field", valueColumn: "_value")
+          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         result = query_api.query_data_frame(query)
         
-        if result.empty:
+        if result.empty or len(result) == 0:
             # Return mock trend data
-            dates = [(datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") 
-                     for i in range(days-1, -1, -1)]
+            return jsonify(get_mock_history(days))
             return jsonify({
                 "dates": dates,
                 "hrv": [30 + i + (i % 7) for i in range(days)],
@@ -216,20 +219,13 @@ def workouts():
             from(bucket: "{INFLUXDB_BUCKET}")
               |> range(start: -30d)
               |> filter(fn: (r) => r._measurement == "workouts")
-              |> pivot(rowKey: "_time", columnKey: "_field", valueColumn: "_value")
+              |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
             '''
             result = query_api.query_data_frame(query)
             
-            if result.empty:
+            if result.empty or len(result) == 0:
                 # Mock data
-                return jsonify([
-                    {"date": "2026-02-15", "type": "Running", "duration": 28, 
-                     "avg_hr": 145, "feeling": "great"},
-                    {"date": "2026-02-14", "type": "Strength", "duration": 45, 
-                     "avg_hr": 110, "feeling": "good"},
-                    {"date": "2026-02-13", "type": "Rest", "duration": 0, 
-                     "avg_hr": 65, "feeling": "great"},
-                ])
+                return jsonify(get_mock_workouts())
             
             return jsonify(result.to_dict(orient='records'))
         except Exception as e:
@@ -289,6 +285,41 @@ def suunto_sync():
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
         
         return jsonify({"synced": len(data) if data else 0, "data": data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/strava/sync')
+def strava_sync():
+    """Sync workouts from Strava API"""
+    days = request.args.get('days', 30, type=int)
+    
+    if not strava.is_configured:
+        # Return mock data
+        mock_workouts = MockStravaClient().get_activities(days)
+        return jsonify({"synced": len(mock_workouts), "data": mock_workouts, "mode": "demo"})
+    
+    if not write_api:
+        return jsonify({"error": "InfluxDB not configured"}), 500
+    
+    try:
+        activities = strava.get_activities(days)
+        
+        if activities:
+            from influxdb_client import Point
+            for activity in activities:
+                point = Point("workouts")\
+                    .tag("type", activity.get("type", "Unknown"))\
+                    .tag("date", activity.get("date", ""))\
+                    .field("duration_minutes", float(activity.get("duration", 0)))\
+                    .field("avg_hr", float(activity.get("avg_hr", 0)) if activity.get("avg_hr") else 0.0)\
+                    .field("max_hr", float(activity.get("max_hr", 0)) if activity.get("max_hr") else 0.0)\
+                    .field("calories", activity.get("calories", 0))\
+                    .field("feeling", activity.get("feeling", "good"))
+                
+                write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+        
+        return jsonify({"synced": len(activities) if activities else 0, "data": activities})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

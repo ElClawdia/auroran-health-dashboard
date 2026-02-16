@@ -8,6 +8,10 @@
 
 A comprehensive health monitoring and exercise planning system that collects data from wearable devices (Suunto, Apple Health), stores it in InfluxDB, and provides AI-powered exercise recommendations through a beautiful web dashboard.
 
+### Dashboard Preview
+
+![Health Dashboard Preview](dashboard-preview.png)
+
 ### Features
 
 - 📊 **Real-time Health Metrics** - HRV, sleep, resting HR, steps tracking
