@@ -25,3 +25,31 @@
 2026-02-16 18:13:51,281 INFO __main__: Connected to InfluxDB at http://influxdb:8086
 2026-02-16 18:13:51,302 WARNING werkzeug:  * Debugger is active!
 2026-02-16 18:13:51,303 INFO werkzeug:  * Debugger PIN: 978-785-653
+2026-02-16 18:14:17,636 INFO werkzeug:  * Detected change in '/home/node/.openclaw/workspace/health-dashboard/app.py', reloading
+2026-02-16 18:14:19,327 INFO __main__: Connected to InfluxDB at http://influxdb:8086
+2026-02-16 18:14:19,347 WARNING werkzeug:  * Debugger is active!
+2026-02-16 18:14:19,348 INFO werkzeug:  * Debugger PIN: 978-785-653
+2026-02-16 18:14:31,165 INFO __main__: Fetching today's health metrics
+2026-02-16 18:14:31,197 INFO werkzeug: 172.19.0.1 - - [16/Feb/2026 18:14:31] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-16 18:14:31,220 INFO __main__: Fetching health history
+2026-02-16 18:14:31,251 INFO werkzeug: 172.19.0.1 - - [16/Feb/2026 18:14:31] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-16 18:14:31,295 INFO werkzeug: 172.19.0.1 - - [16/Feb/2026 18:14:31] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-16 18:14:33,885 INFO werkzeug:  * Detected change in '/home/node/.openclaw/workspace/health-dashboard/config.py', reloading
+2026-02-16 18:14:35,239 INFO __main__: Connected to InfluxDB at http://influxdb:8086
+2026-02-16 18:14:35,256 WARNING werkzeug:  * Debugger is active!
+2026-02-16 18:14:35,257 INFO werkzeug:  * Debugger PIN: 978-785-653
+2026-02-16 18:14:41,934 INFO werkzeug:  * Detected change in '/home/node/.openclaw/workspace/health-dashboard/app.py', reloading
+2026-02-16 18:14:43,790 INFO __main__: Connected to InfluxDB at http://influxdb:8086
+2026-02-16 18:14:43,813 WARNING werkzeug:  * Debugger is active!
+2026-02-16 18:14:43,814 INFO werkzeug:  * Debugger PIN: 978-785-653
+2026-02-16 18:14:57,372 INFO werkzeug:  * Detected change in '/home/node/.openclaw/workspace/health-dashboard/config.py', reloading
+2026-02-16 18:14:58,523 INFO config: Using InfluxDB URL: http://influxdb:8086
+2026-02-16 18:14:58,533 INFO __main__: Connected to InfluxDB at http://influxdb:8086
+2026-02-16 18:14:58,545 WARNING werkzeug:  * Debugger is active!
+2026-02-16 18:14:58,546 INFO werkzeug:  * Debugger PIN: 978-785-653
+2026-02-16 18:15:04,192 INFO werkzeug:  * Detected change in '/home/node/.openclaw/workspace/health-dashboard/config.py', reloading
+2026-02-16 18:15:06,067 INFO config: Using InfluxDB URL: http://influxdb:8086
+2026-02-16 18:15:06,067 INFO config: Strava token configured: True
+2026-02-16 18:15:06,084 INFO __main__: Connected to InfluxDB at http://influxdb:8086
+2026-02-16 18:15:06,113 WARNING werkzeug:  * Debugger is active!
+2026-02-16 18:15:06,114 INFO werkzeug:  * Debugger PIN: 978-785-653

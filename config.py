@@ -5,7 +5,15 @@ Set these environment variables or edit secrets.json
 
 import os
 import json
+import logging
 from pathlib import Path
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load secrets from json file if exists
 SECRETS_FILE = Path(__file__).parent / "secrets.json"
@@ -20,6 +28,7 @@ def get_secret(key, default=''):
 
 # InfluxDB Configuration
 INFLUXDB_URL = os.getenv('INFLUXDB_URL', get_secret('influxdb_url', 'http://influxdb:8086'))
+logger.info(f"Using InfluxDB URL: {INFLUXDB_URL}")
 INFLUXDB_TOKEN = get_secret('influxdb_token', '')
 INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'auroran')
 INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'health')
@@ -30,6 +39,7 @@ SUUNTO_CLIENT_SECRET = get_secret('suunto_client_secret', '')
 
 # Strava API Configuration
 STRAVA_ACCESS_TOKEN = get_secret('strava_access_token', '')
+logger.info(f"Strava token configured: {bool(STRAVA_ACCESS_TOKEN)}")
 
 # Garmin (no personal API - sync via Strava recommended)
 GARMIN_USERNAME = get_secret('garmin_username', '')

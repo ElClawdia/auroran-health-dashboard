@@ -174,16 +174,19 @@ def health_today():
             "training_load": float(latest.get("training_load", 1.0))
         })
     except Exception as e:
+        logger.error(f"Error fetching today's health: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/health/history')
 def health_history():
     """Get historical health data"""
+    logger.info("Fetching health history")
     days = request.args.get('days', 30, type=int)
     
     if not query_api:
         # Return mock data for demo
+        logger.info("Using mock data for history (no InfluxDB)")
         return jsonify(get_mock_history(days))
     
     try:
@@ -217,15 +220,18 @@ def health_history():
             "recovery": df["recovery_score"].tolist() if "recovery_score" in df else []
         })
     except Exception as e:
+        logger.error(f"Error fetching health history: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/workouts', methods=['GET', 'POST'])
 def workouts():
     """Get or log workouts"""
+    logger.info("Fetching workouts")
     if request.method == 'GET':
         if not query_api:
             # Return mock data for demo
+            logger.info("Using mock workouts (no InfluxDB)")
             return jsonify(get_mock_workouts())
         
         try:
