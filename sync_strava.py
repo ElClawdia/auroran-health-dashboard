@@ -44,7 +44,8 @@ def sync_strava_to_influxdb():
     
     # Get existing Strava IDs from InfluxDB to avoid duplicates
     query_api = influxdb.query_api()
-    existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -30d) |> filter(fn: (r) => r._measurement =~ /workouts_/) |> keep(columns: ["strava_id"])'
+    # Query all measurements that might have workouts
+    existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -30d) |> filter(fn: (r) => r._measurement == "workouts" or r._measurement =~ /workouts_/) |> keep(columns: ["strava_id"])'
     try:
         existing_df = query_api.query_data_frame(existing_query)
         existing_ids = set(existing_df['strava_id'].dropna().astype(str)) if not existing_df.empty else set()
