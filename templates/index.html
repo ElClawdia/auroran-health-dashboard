@@ -712,11 +712,14 @@
                 const heart = hr ? hr + ' bpm' : '';
                 
                 // Mobile-friendly card layout
+                const stravaUrl = w.id ? `https://www.strava.com/activities/${w.id}` : '';
+                const workoutLink = stravaUrl ? `<a href="${stravaUrl}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">${name}</a>` : name;
+                
                 html += `
                     <div style="padding: 12px; border-bottom: 1px solid var(--border);">
                         <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px;">
                             <div style="flex: 1; min-width: 140px;">
-                                <span style="font-weight: 600;">${name}</span>
+                                <span style="font-weight: 600;">${workoutLink}</span>
                                 <span style="color: var(--text-dim); margin-left: 6px;">${w.date}</span>
                                 ${time ? `<span style="color: var(--text-dim); margin-left: 4px;">${time}</span>` : ''}
                             </div>

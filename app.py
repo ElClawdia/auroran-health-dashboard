@@ -227,6 +227,7 @@ def workouts():
                 # Take last 10 workouts
                 activities = activities[:10]
                 return jsonify([{
+                    "id": a.get("id", 0),
                     "date": a.get("date", ""),
                     "time": a.get("time", ""),
                     "name": a.get("name", ""),
