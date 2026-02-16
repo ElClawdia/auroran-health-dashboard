@@ -279,11 +279,31 @@
         }
         
         @media (max-width: 768px) {
+            .container {
+                padding: 12px;
+            }
+            
+            header h1 {
+                font-size: 1.2rem;
+            }
+            
             .week-grid {
                 grid-template-columns: repeat(4, 1fr);
             }
             
             .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .chart-card {
+                padding: 12px;
+            }
+            
+            .workout-header {
+                display: none !important;
+            }
+            
+            .stats-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
         }
@@ -671,15 +691,10 @@
             }
             
             // Header row - right align to match data
-            let html = `<div style="display: flex; justify-content: space-between; padding: 8px 12px; 
-                        border-bottom: 2px solid var(--border); color: var(--text-dim); font-size: 12px; font-weight: 600;">
-                        <span style="flex: 1;">WORKOUT</span>
-                        <span style="font-family: monospace; text-align: right; min-width: 200px;">
-                            <span style="display: inline-block; width: 50px; text-align: right;">min</span>
-                            <span style="display: inline-block; width: 50px; text-align: right;">↑m</span>
-                            <span style="display: inline-block; width: 50px; text-align: right;">⚡EFFORT</span>
-                            <span style="display: inline-block; width: 70px; text-align: right;">bpm</span>
-                        </span>
+            let html = `<div class="workout-header" style="display: none; padding: 8px 12px; 
+                        border-bottom: 2px solid var(--border); color: var(--text-dim); font-size: 11px; font-weight: 600;">
+                        <span>WORKOUT</span>
+                        <span>min ↑m ⚡EFFORT bpm</span>
                     </div>`;
             
             workouts.slice(0, 10).forEach(w => {
@@ -691,26 +706,27 @@
                 const time = w.time ? w.time : '';
                 const name = w.name ? w.name : w.type;
                 
-                // Format with fixed widths for alignment
                 const dur = (w.duration || w.duration_minutes || '--') + ' min';
                 const elev = elevation ? '↑' + elevation : '';
                 const eff = effort ? '⚡' + effort : '';
                 const heart = hr ? hr + ' bpm' : '';
                 
+                // Mobile-friendly card layout
                 html += `
-                    <div style="display: flex; justify-content: space-between; padding: 12px; 
-                                border-bottom: 1px solid var(--border);">
-                        <div style="flex: 1;">
-                            <span style="font-weight: 600;">${name}</span>
-                            <span style="color: var(--text-dim); margin-left: 8px;">${w.date}</span>
-                            ${time ? `<span style="color: var(--text-dim); margin-left: 4px;">${time}</span>` : ''}
-                            ${distance ? `<span style="color: var(--accent); margin-left: 8px;">${distance}</span>` : ''}
+                    <div style="padding: 12px; border-bottom: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px;">
+                            <div style="flex: 1; min-width: 140px;">
+                                <span style="font-weight: 600;">${name}</span>
+                                <span style="color: var(--text-dim); margin-left: 6px;">${w.date}</span>
+                                ${time ? `<span style="color: var(--text-dim); margin-left: 4px;">${time}</span>` : ''}
+                            </div>
+                            ${distance ? `<span style="color: var(--accent); font-weight: 600;">${distance}</span>` : ''}
                         </div>
-                        <div style="font-family: monospace; text-align: right; min-width: 200px;">
-                            <span style="display: inline-block; width: 50px; text-align: right;">${dur}</span>
-                            <span style="display: inline-block; width: 50px; text-align: right; color: var(--text-dim);">${elev}</span>
-                            <span style="display: inline-block; width: 50px; text-align: right; color: #f59e0b; font-weight: 600;">${eff}</span>
-                            <span style="display: inline-block; width: 70px; text-align: right; color: var(--text-dim);">${heart}</span>
+                        <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-dim);">
+                            <span>${dur}</span>
+                            <span>${elev}</span>
+                            <span style="color: #f59e0b; font-weight: 600;">${eff}</span>
+                            <span>${heart}</span>
                         </div>
                     </div>
                 `;
