@@ -7,7 +7,8 @@ import os
 
 # InfluxDB Configuration
 # Try multiple URLs for Docker networking
-INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://sirius:8086')
+# Priority: localhost (host), sirius (host), docker bridge
+INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://host.docker.internal:8086')
 INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN', 'REMOVED==')
 INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'auroran')
 INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'health')
