@@ -19,7 +19,7 @@ def get_secret(key, default=''):
     return os.getenv(key, secrets.get(key, default))
 
 # InfluxDB Configuration
-INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://influxdb:8086')
+INFLUXDB_URL = os.getenv('INFLUXDB_URL', get_secret('influxdb_url', 'http://influxdb:8086'))
 INFLUXDB_TOKEN = get_secret('influxdb_token', '')
 INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'auroran')
 INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'health')

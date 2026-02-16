@@ -8,12 +8,24 @@ Access: http://localhost:5000
 """
 
 import os
-import json
+import sys
+import logging
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
 import pandas as pd
+
+# Configure logging with timestamps
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('/home/node/.openclaw/workspace/health-dashboard/app.log', mode='a')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Import our modules
 from suunto_client import SuuntoClient
@@ -44,13 +56,13 @@ if INFLUXDB_TOKEN:
         if health.status == "pass":
             write_api = influx_client.write_api(write_options=SYNCHRONOUS)
             query_api = influx_client.query_api()
-            print(f"✅ Connected to InfluxDB at {INFLUXDB_URL}")
+            logger.info(f"Connected to InfluxDB at {INFLUXDB_URL}")
         else:
-            print(f"⚠️ InfluxDB health check failed, using demo mode")
+            logger.warning("InfluxDB health check failed, using demo mode")
             influx_client = None
     except Exception as e:
-        print(f"⚠️ Could not connect to InfluxDB: {e}")
-        print("   Running in demo mode with mock data")
+        logger.error(f"Could not connect to InfluxDB: {e}")
+        logger.warning("Running in demo mode with mock data")
         influx_client = None
 
 # Initialize modules
@@ -118,8 +130,10 @@ def index():
 @app.route('/api/health/today')
 def health_today():
     """Get today's health metrics"""
+    logger.info("Fetching today's health metrics")
     if not query_api:
         # Return mock data for demo
+        logger.info("Using mock data for today's health (no InfluxDB)")
         return jsonify(get_mock_health_today())
     
     try:
