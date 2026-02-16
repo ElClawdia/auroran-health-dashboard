@@ -2,8 +2,9 @@
 .env
 .env.*
 
-# Secrets
+# Secrets (API keys)
 secrets.yaml
+secrets.json
 
 # Python
 __pycache__/

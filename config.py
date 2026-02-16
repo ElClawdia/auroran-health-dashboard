@@ -1,21 +1,21 @@
 """
 Configuration for Health Dashboard
-Set these environment variables or edit secrets.yaml
+Set these environment variables or edit secrets.json
 """
 
 import os
-import yaml
+import json
 from pathlib import Path
 
-# Load secrets from yaml if exists
-SECRETS_FILE = Path(__file__).parent / "secrets.yaml"
+# Load secrets from json file if exists
+SECRETS_FILE = Path(__file__).parent / "secrets.json"
 secrets = {}
 if SECRETS_FILE.exists():
     with open(SECRETS_FILE) as f:
-        secrets = yaml.safe_load(f) or {}
+        secrets = json.load(f)
 
 def get_secret(key, default=''):
-    """Get secret from env var or secrets.yaml"""
+    """Get secret from env var or secrets file"""
     return os.getenv(key, secrets.get(key, default))
 
 # InfluxDB Configuration
