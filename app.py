@@ -48,6 +48,56 @@ else:
 suunto = SuuntoClient(SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET)
 planner = ExercisePlanner()
 
+# Generate mock data for demo mode
+def get_mock_health_today():
+    """Return realistic mock data for demo"""
+    import random
+    return {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "sleep_hours": round(7.0 + random.random() * 1.5, 1),
+        "hrv": random.randint(38, 48),
+        "resting_hr": random.randint(54, 62),
+        "steps": random.randint(5000, 12000),
+        "recovery_score": random.randint(70, 95),
+        "training_load": round(random.uniform(0.8, 1.4), 2),
+        "trend": {
+            "sleep": "+12m" if random.random() > 0.5 else "-5m",
+            "hrv": "+5ms ▲" if random.random() > 0.5 else "-3ms ▼",
+            "resting_hr": "-2bpm ▼" if random.random() > 0.5 else "+1bpm ▲"
+        }
+    }
+
+def get_mock_history(days=30):
+    """Return realistic mock history"""
+    import random
+    dates = [(datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days-1, -1, -1)]
+    
+    hrv = [35 + i + random.randint(-3, 5) for i in range(days)]
+    resting_hr = [65 - i//3 + random.randint(-2, 2) for i in range(days)]
+    sleep = [7 + (i % 5) * 0.2 + random.uniform(-0.3, 0.3) for i in range(days)]
+    recovery = [60 + i + random.randint(-5, 10) for i in range(days)]
+    
+    return {
+        "dates": dates,
+        "hrv": [max(20, min(60, h)) for h in hrv],
+        "resting_hr": [max(50, min(70, r)) for r in resting_hr],
+        "sleep": [round(max(5, min(9, s)), 1) for s in sleep],
+        "recovery": [max(30, min(100, r)) for r in recovery]
+    }
+
+def get_mock_workouts():
+    """Return realistic mock workouts"""
+    import random
+    workouts = [
+        {"date": "2026-02-15", "type": "Running", "duration": 35, "avg_hr": 145, "max_hr": 168, "feeling": "great"},
+        {"date": "2026-02-14", "type": "Strength", "duration": 45, "avg_hr": 110, "max_hr": 135, "feeling": "good"},
+        {"date": "2026-02-13", "type": "Rest", "duration": 0, "avg_hr": 62, "max_hr": 78, "feeling": "great"},
+        {"date": "2026-02-12", "type": "Cycling", "duration": 60, "avg_hr": 128, "max_hr": 155, "feeling": "good"},
+        {"date": "2026-02-11", "type": "HIIT", "duration": 25, "avg_hr": 155, "max_hr": 175, "feeling": "okay"},
+        {"date": "2026-02-10", "type": "Running", "duration": 40, "avg_hr": 142, "max_hr": 165, "feeling": "great"},
+    ]
+    return workouts
+
 
 @app.route('/')
 def index():
@@ -59,7 +109,8 @@ def index():
 def health_today():
     """Get today's health metrics"""
     if not query_api:
-        return jsonify({"error": "InfluxDB not configured"}), 500
+        # Return mock data for demo
+        return jsonify(get_mock_health_today())
     
     try:
         query = f'''
@@ -108,7 +159,8 @@ def health_history():
     days = request.args.get('days', 30, type=int)
     
     if not query_api:
-        return jsonify({"error": "InfluxDB not configured"}), 500
+        # Return mock data for demo
+        return jsonify(get_mock_history(days))
     
     try:
         query = f'''
@@ -150,7 +202,8 @@ def workouts():
     """Get or log workouts"""
     if request.method == 'GET':
         if not query_api:
-            return jsonify({"error": "InfluxDB not configured"}), 500
+            # Return mock data for demo
+            return jsonify(get_mock_workouts())
         
         try:
             query = f'''
@@ -201,26 +254,8 @@ def workouts():
 @app.route('/api/recommendations/today')
 def recommendations_today():
     """Get today's exercise recommendations"""
-    # Get today's health data
-    health_data = health_today().get_json()
-    
-    if "error" in health_data:
-        # Mock recommendation
-        return jsonify({
-            "recovery": 85,
-            "recommendation": "HIGH",
-            "message": "Great recovery! Push hard today.",
-            "workout": {
-                "type": "Running",
-                "duration": 45,
-                "zone": "2-3",
-                "pace": "5:30-6:00 /km"
-            },
-            "alternatives": [
-                {"type": "Intervals", "duration": 30, "intensity": "High"},
-                {"type": "Strength", "duration": 45, "intensity": "Moderate"}
-            ]
-        })
+    # Use mock data for demo
+    health_data = get_mock_health_today()
     
     # Use planner to generate recommendation
     rec = planner.get_recommendation(health_data)
