@@ -221,6 +221,25 @@ def workouts():
               |> filter(fn: (r) => r._measurement == "workouts")
               |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
             '''
+            # Prefer Strava data when configured (more complete)
+            if strava.is_configured:
+                activities = strava.get_activities(30)  # Get enough for filtering
+                # Take last 10 workouts
+                activities = activities[:10]
+                return jsonify([{
+                    "date": a.get("date", ""),
+                    "time": a.get("time", ""),
+                    "name": a.get("name", ""),
+                    "type": a.get("type", "Unknown"),
+                    "duration": a.get("duration", 0),
+                    "distance": a.get("distance", 0),
+                    "elevation_gain": a.get("elevation_gain", 0),
+                    "avg_hr": a.get("avg_hr", 0),
+                    "max_hr": a.get("max_hr", 0),
+                    "suffer_score": a.get("suffer_score", 0),
+                    "feeling": a.get("feeling", "good")
+                } for a in activities])
+            
             result = query_api.query_data_frame(query)
             
             if result.empty or len(result) == 0:

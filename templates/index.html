@@ -670,23 +670,47 @@
                 return;
             }
             
-            let html = '';
-            workouts.slice(0, 5).forEach(w => {
-                const feelingEmoji = w.feeling === 'great' ? '🔥' : 
-                                     w.feeling === 'good' ? '😊' : 
-                                     w.feeling === 'okay' ? '😐' : '😴';
+            // Header row - right align to match data
+            let html = `<div style="display: flex; justify-content: space-between; padding: 8px 12px; 
+                        border-bottom: 2px solid var(--border); color: var(--text-dim); font-size: 12px; font-weight: 600;">
+                        <span style="flex: 1;">WORKOUT</span>
+                        <span style="font-family: monospace; text-align: right; min-width: 200px;">
+                            <span style="display: inline-block; width: 50px; text-align: right;">min</span>
+                            <span style="display: inline-block; width: 50px; text-align: right;">↑m</span>
+                            <span style="display: inline-block; width: 50px; text-align: right;">⚡EFFORT</span>
+                            <span style="display: inline-block; width: 70px; text-align: right;">bpm</span>
+                        </span>
+                    </div>`;
+            
+            workouts.slice(0, 10).forEach(w => {
+                const isSwimming = w.type && w.type.toLowerCase().includes('swim');
+                const distance = w.distance ? (isSwimming ? Math.round(w.distance) + 'm' : (w.distance / 1000).toFixed(1) + 'km') : '';
+                const elevation = w.elevation_gain ? Math.round(w.elevation_gain) + 'm' : '';
+                const effort = w.suffer_score ? Math.round(w.suffer_score) : '';
+                const hr = w.avg_hr ? Math.round(w.avg_hr) : '';
+                const time = w.time ? w.time : '';
+                const name = w.name ? w.name : w.type;
+                
+                // Format with fixed widths for alignment
+                const dur = (w.duration || w.duration_minutes || '--') + ' min';
+                const elev = elevation ? '↑' + elevation : '';
+                const eff = effort ? '⚡' + effort : '';
+                const heart = hr ? hr + ' bpm' : '';
+                
                 html += `
                     <div style="display: flex; justify-content: space-between; padding: 12px; 
                                 border-bottom: 1px solid var(--border);">
-                        <div>
-                            <span style="font-weight: 600;">${w.type || 'Workout'}</span>
+                        <div style="flex: 1;">
+                            <span style="font-weight: 600;">${name}</span>
                             <span style="color: var(--text-dim); margin-left: 8px;">${w.date}</span>
+                            ${time ? `<span style="color: var(--text-dim); margin-left: 4px;">${time}</span>` : ''}
+                            ${distance ? `<span style="color: var(--accent); margin-left: 8px;">${distance}</span>` : ''}
                         </div>
-                        <div style="text-align: right;">
-                            <span>${w.duration || '--'} min</span>
-                            <span style="color: var(--text-dim); margin-left: 8px;">
-                                ${w.avg_hr ? w.avg_hr + ' bpm' : ''} ${feelingEmoji}
-                            </span>
+                        <div style="font-family: monospace; text-align: right; min-width: 200px;">
+                            <span style="display: inline-block; width: 50px; text-align: right;">${dur}</span>
+                            <span style="display: inline-block; width: 50px; text-align: right; color: var(--text-dim);">${elev}</span>
+                            <span style="display: inline-block; width: 50px; text-align: right; color: #f59e0b; font-weight: 600;">${eff}</span>
+                            <span style="display: inline-block; width: 70px; text-align: right; color: var(--text-dim);">${heart}</span>
                         </div>
                     </div>
                 `;

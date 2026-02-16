@@ -18,7 +18,7 @@ SUUNTO_CLIENT_ID = os.getenv('SUUNTO_CLIENT_ID', '')
 SUUNTO_CLIENT_SECRET = os.getenv('SUUNTO_CLIENT_SECRET', '')
 
 # Strava API Configuration
-STRAVA_ACCESS_TOKEN = os.getenv('STRAVA_ACCESS_TOKEN', '')
+STRAVA_ACCESS_TOKEN = os.getenv('STRAVA_ACCESS_TOKEN', 'REPLACE_STRAVA_TOKEN')
 
 # Garmin (no personal API - sync via Strava recommended)
 GARMIN_USERNAME = os.getenv('GARMIN_USERNAME', '')
