@@ -1,5 +1,22 @@
 # Health Command Center - Personal Health Dashboard
 
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Status](https://img.shields.io/badge/Status-Active-success)
+
+## About
+
+A comprehensive health monitoring and exercise planning system that collects data from wearable devices (Suunto, Apple Health), stores it in InfluxDB, and provides AI-powered exercise recommendations through a beautiful web dashboard.
+
+### Features
+
+- 📊 **Real-time Health Metrics** - HRV, sleep, resting HR, steps tracking
+- 🧠 **AI Exercise Planner** - Recovery-based workout recommendations
+- 📈 **Beautiful Dashboards** - Dark-theme UI with Chart.js visualizations
+- 🔗 **Suunto API Integration** - Direct sync with Suunto wearable devices
+- 🏃 **Training Periodization** - Recovery/Base/Build/Peak weekly cycles
+- 🎯 **Race Predictor** - Marathon/Half-marathon time predictions
+
 ## Vision
 A comprehensive health monitoring and exercise planning system that:
 1. Collects data from Suunto API (workouts, sleep, HR, HRV)
