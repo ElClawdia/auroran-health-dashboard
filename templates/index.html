@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🦞 Auroran Health Command Center</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --card-bg: #161b22;
+            --border: #30363d;
+            --primary: #58a6ff;
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        h1 {
+            font-size: 1.8rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        h1 .emoji {
+            font-size: 2rem;
+        }
+        
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-top: 4px;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        
+        .card-label {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .card-value {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .card-trend {
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .trend-up { color: var(--success); }
+        .trend-down { color: var(--danger); }
+        .trend-neutral { color: var(--text-dim); }
+        
+        .chart-card {
+            grid-column: 1 / -1;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+        
+        .chart-title {
+            font-size: 1.1rem;
+            margin-bottom: 16px;
+            color: var(--text);
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        
+        .recommendation-card {
+            background: linear-gradient(135deg, var(--card-bg) 0%, #1a2332 100%);
+            border: 1px solid var(--primary);
+        }
+        
+        .recovery-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 1.2rem;
+            margin-bottom: 12px;
+        }
+        
+        .recovery-high { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+        .recovery-moderate { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+        .recovery-easy { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+        .recovery-rest { background: rgba(248, 81, 73, 0.2); color: var(--danger); }
+        
+        .workout-recommendation {
+            margin-top: 16px;
+        }
+        
+        .workout-type {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+        
+        .workout-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        
+        .workout-detail {
+            background: rgba(88, 166, 255, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .workout-detail-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+        
+        .workout-detail-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
+        
+        .alternatives {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+        
+        .alternatives h4 {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+        
+        .alt-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 0.9rem;
+        }
+        
+        .tips {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(88, 166, 255, 0.05);
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+        
+        .tips li {
+            margin-left: 16px;
+            margin-bottom: 4px;
+            color: var(--text-dim);
+        }
+        
+        .weekly-plan {
+            grid-column: 1 / -1;
+        }
+        
+        .week-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            margin-top: 16px;
+        }
+        
+        .day-card {
+            background: var(--bg);
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.85rem;
+        }
+        
+        .day-name {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        
+        .day-type {
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 4px;
+        }
+        
+        .day-duration {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+        
+        .day-rest {
+            color: var(--danger);
+        }
+        
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            color: var(--text-dim);
+        }
+        
+        .error {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .week-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+            
+            .grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1><span class="emoji">🦞</span> Auroran Health Command Center</h1>
+                <div class="subtitle">Personal AI Health Dashboard • Tapio's Training Hub</div>
+            </div>
+            <div id="last-updated" style="color: var(--text-dim); font-size: 0.85rem;">
+                Loading...
+            </div>
+        </header>
+        
+        <div id="error-container"></div>
+        
+        <!-- Today's Stats -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-label">💤 Sleep</div>
+                <div class="card-value" id="sleep-value">--</div>
+                <div class="card-trend" id="sleep-trend"></div>
+            </div>
+            <div class="card">
+                <div class="card-label">❤️ HRV</div>
+                <div class="card-value" id="hrv-value">--</div>
+                <div class="card-trend" id="hrv-trend"></div>
+            </div>
+            <div class="card">
+                <div class="card-label">🫀 Resting HR</div>
+                <div class="card-value" id="rhr-value">--</div>
+                <div class="card-trend" id="rhr-trend"></div>
+            </div>
+            <div class="card">
+                <div class="card-label">👟 Steps</div>
+                <div class="card-value" id="steps-value">--</div>
+                <div class="card-trend" id="steps-trend"></div>
+            </div>
+        </div>
+        
+        <!-- Charts -->
+        <div class="chart-card">
+            <div class="chart-title">📈 30-Day Health Trends</div>
+            <div class="chart-container">
+                <canvas id="trendsChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Today's Recommendation -->
+        <div class="grid">
+            <div class="card recommendation-card" style="grid-column: span 2;">
+                <div class="card-label">🎯 Today's Recommendation</div>
+                <div id="recovery-badge" class="recovery-badge recovery-high">RECOVERY: --%</div>
+                <p id="recommendation-message" style="color: var(--text); margin-bottom: 16px;">
+                    Loading your personalized recommendation...
+                </p>
+                
+                <div id="workout-section" class="workout-recommendation">
+                    <div class="workout-type" id="workout-type">--</div>
+                    <div class="workout-details">
+                        <div class="workout-detail">
+                            <div class="workout-detail-label">Duration</div>
+                            <div class="workout-detail-value" id="workout-duration">--</div>
+                        </div>
+                        <div class="workout-detail">
+                            <div class="workout-detail-label">Zone</div>
+                            <div class="workout-detail-value" id="workout-zone">--</div>
+                        </div>
+                        <div class="workout-detail">
+                            <div class="workout-detail-label">Intensity</div>
+                            <div class="workout-detail-value" id="workout-intensity">--</div>
+                        </div>
+                        <div class="workout-detail">
+                            <div class="workout-detail-label">Pace</div>
+                            <div class="workout-detail-value" id="workout-pace">--</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="alternatives">
+                    <h4>Alternatives</h4>
+                    <div id="alternatives-list"></div>
+                </div>
+                
+                <div class="tips">
+                    <ul id="tips-list"></ul>
+                </div>
+            </div>
+            
+            <!-- Weekly Summary -->
+            <div class="card recommendation-card">
+                <div class="card-label">📅 This Week</div>
+                <div id="weekly-status" style="font-size: 1.2rem; font-weight: 600; color: var(--success);">
+                    --
+                </div>
+                <div id="weekly-details" style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim);">
+                    --
+                </div>
+            </div>
+        </div>
+        
+        <!-- Weekly Plan -->
+        <div class="chart-card weekly-plan">
+            <div class="chart-title">🗓️ This Week's Training Plan</div>
+            <div class="week-grid" id="week-plan">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+        
+        <!-- Recent Workouts -->
+        <div class="chart-card">
+            <div class="chart-title">🏃 Recent Workouts</div>
+            <div id="workouts-list">
+                <div class="loading">Loading workouts...</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Chart configuration
+        let trendsChart = null;
+        
+        async function fetchData() {
+            try {
+                // Fetch today's health
+                const healthRes = await fetch('/api/health/today');
+                const health = await healthRes.json();
+                updateHealthCards(health);
+                
+                // Fetch history
+                const historyRes = await fetch('/api/health/history?days=30');
+                const history = await historyRes.json();
+                updateChart(history);
+                
+                // Fetch recommendation
+                const recRes = await fetch('/api/recommendations/today');
+                const recommendation = await recRes.json();
+                updateRecommendation(recommendation);
+                
+                // Fetch weekly plan
+                const weekPlan = recommendation.alternatives ? generateWeekPlan(recommendation) : [];
+                updateWeekPlan(weekPlan);
+                
+                // Fetch workouts
+                const workoutsRes = await fetch('/api/workouts');
+                const workouts = await workoutsRes.json();
+                updateWorkouts(workouts);
+                
+                // Update timestamp
+                document.getElementById('last-updated').textContent = 
+                    'Updated: ' + new Date().toLocaleTimeString();
+                    
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                document.getElementById('error-container').innerHTML = 
+                    `<div class="error">Error loading data: ${error.message}</div>`;
+            }
+        }
+        
+        function updateHealthCards(data) {
+            document.getElementById('sleep-value').textContent = data.sleep_hours ? data.sleep_hours.toFixed(1) + 'h' : '--';
+            document.getElementById('hrv-value').textContent = data.hrv ? data.hrv + ' ms' : '--';
+            document.getElementById('rhr-value').textContent = data.resting_hr ? data.resting_hr + ' bpm' : '--';
+            document.getElementById('steps-value').textContent = data.steps ? data.steps.toLocaleString() : '--';
+            
+            if (data.trend) {
+                document.getElementById('sleep-trend').innerHTML = formatTrend(data.trend.sleep, 'sleep');
+                document.getElementById('hrv-trend').innerHTML = formatTrend(data.trend.hrv, 'hrv');
+                document.getElementById('rhr-trend').innerHTML = formatTrend(data.trend.resting_hr, 'rhr');
+            }
+        }
+        
+        function formatTrend(value, type) {
+            if (!value) return '';
+            let cls = 'trend-neutral';
+            if (type === 'hrv' || type === 'sleep') {
+                cls = value.includes('+') ? 'trend-up' : (value.includes('-') ? 'trend-down' : 'trend-neutral');
+            } else if (type === 'rhr') {
+                cls = value.includes('-') ? 'trend-up' : (value.includes('+') ? 'trend-down' : 'trend-neutral');
+            }
+            return `<span class="${cls}">${value}</span>`;
+        }
+        
+        function updateChart(data) {
+            const ctx = document.getElementById('trendsChart').getContext('2d');
+            
+            if (trendsChart) {
+                trendsChart.destroy();
+            }
+            
+            trendsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.dates.slice(-30).map(d => d.slice(5)),
+                    datasets: [
+                        {
+                            label: 'HRV (ms)',
+                            data: data.hrv,
+                            borderColor: '#3fb950',
+                            backgroundColor: 'rgba(63, 185, 80, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Resting HR (bpm)',
+                            data: data.resting_hr,
+                            borderColor: '#f85149',
+                            backgroundColor: 'rgba(248, 81, 73, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            yAxisID: 'y1'
+                        },
+                        {
+                            label: 'Sleep (h)',
+                            data: data.sleep,
+                            borderColor: '#58a6ff',
+                            backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            yAxisID: 'y2'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#c9d1d9' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#8b949e' },
+                            grid: { color: '#30363d' }
+                        },
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            ticks: { color: '#3fb950' },
+                            grid: { color: '#30363d' },
+                            title: { display: true, text: 'HRV (ms)', color: '#3fb950' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            ticks: { color: '#f85149' },
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: 'HR (bpm)', color: '#f85149' }
+                        },
+                        y2: {
+                            type: 'linear',
+                            position: 'right',
+                            ticks: { color: '#58a6ff', callback: v => v + 'h' },
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: 'Sleep (h)', color: '#58a6ff' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function updateRecommendation(data) {
+            const badge = document.getElementById('recovery-badge');
+            badge.textContent = `RECOVERY: ${data.recovery}%`;
+            
+            badge.className = 'recovery-badge';
+            if (data.recommendation === 'HIGH') {
+                badge.classList.add('recovery-high');
+            } else if (data.recommendation === 'MODERATE') {
+                badge.classList.add('recovery-moderate');
+            } else if (data.recommendation === 'EASY') {
+                badge.classList.add('recovery-easy');
+            } else {
+                badge.classList.add('recovery-rest');
+            }
+            
+            document.getElementById('recommendation-message').textContent = data.message;
+            
+            if (data.workout) {
+                document.getElementById('workout-type').textContent = data.workout.type || '--';
+                document.getElementById('workout-duration').textContent = data.workout.duration ? data.workout.duration + ' min' : '--';
+                document.getElementById('workout-zone').textContent = data.workout.zone || '--';
+                document.getElementById('workout-intensity').textContent = data.workout.intensity || '--';
+                document.getElementById('workout-pace').textContent = data.workout.pace || '--';
+            } else {
+                document.getElementById('workout-section').style.display = 'none';
+            }
+            
+            // Alternatives
+            const altList = document.getElementById('alternatives-list');
+            altList.innerHTML = '';
+            if (data.alternatives) {
+                data.alternatives.forEach(alt => {
+                    altList.innerHTML += `
+                        <div class="alt-item">
+                            <span>${alt.type}</span>
+                            <span style="color: var(--text-dim);">${alt.duration} min</span>
+                        </div>
+                    `;
+                });
+            }
+            
+            // Tips
+            const tipsList = document.getElementById('tips-list');
+            tipsList.innerHTML = '';
+            if (data.tips) {
+                data.tips.forEach(tip => {
+                    tipsList.innerHTML += `<li>${tip}</li>`;
+                });
+            }
+            
+            // Weekly status
+            document.getElementById('weekly-status').textContent = data.recommendation;
+            document.getElementById('weekly-details').textContent = 
+                data.recommendation === 'HIGH' ? 'Great week to push volume!' :
+                data.recommendation === 'MODERATE' ? 'Build steadily this week' :
+                data.recommendation === 'EASY' ? 'Focus on recovery this week' :
+                'Rest is essential';
+        }
+        
+        function generateWeekPlan(recommendation) {
+            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            const plan = [];
+            
+            // Generate based on recommendation
+            if (recommendation.recommendation === 'HIGH') {
+                plan.push({day: 'Mon', type: 'Intervals', duration: 45});
+                plan.push({day: 'Tue', type: 'Easy Run', duration: 35});
+                plan.push({day: 'Wed', type: 'Strength', duration: 45});
+                plan.push({day: 'Thu', type: 'Tempo', duration: 40});
+                plan.push({day: 'Fri', type: 'Rest', duration: 0});
+                plan.push({day: 'Sat', type: 'Long Run', duration: 75});
+                plan.push({day: 'Sun', type: 'Rest', duration: 0});
+            } else if (recommendation.recommendation === 'MODERATE') {
+                plan.push({day: 'Mon', type: 'Easy Run', duration: 40});
+                plan.push({day: 'Tue', type: 'Strength', duration: 45});
+                plan.push({day: 'Wed', type: 'Rest', duration: 0});
+                plan.push({day: 'Thu', type: 'Tempo', duration: 35});
+                plan.push({day: 'Fri', type: 'Rest', duration: 0});
+                plan.push({day: 'Sat', type: 'Long Run', duration: 50});
+                plan.push({day: 'Sun', type: 'Rest', duration: 0});
+            } else {
+                plan.push({day: 'Mon', type: 'Rest', duration: 0});
+                plan.push({day: 'Tue', type: 'Easy', duration: 25});
+                plan.push({day: 'Wed', type: 'Rest', duration: 0});
+                plan.push({day: 'Thu', type: 'Easy', duration: 25});
+                plan.push({day: 'Fri', type: 'Rest', duration: 0});
+                plan.push({day: 'Sat', type: 'Walk', duration: 30});
+                plan.push({day: 'Sun', type: 'Rest', duration: 0});
+            }
+            
+            return plan;
+        }
+        
+        function updateWeekPlan(plan) {
+            const container = document.getElementById('week-plan');
+            container.innerHTML = '';
+            
+            plan.forEach(day => {
+                const isRest = day.type === 'Rest';
+                container.innerHTML += `
+                    <div class="day-card">
+                        <div class="day-name">${day.day}</div>
+                        <div class="day-type ${isRest ? 'day-rest' : ''}">${day.type}</div>
+                        <div class="day-duration">${isRest ? 'Rest' : day.duration + ' min'}</div>
+                    </div>
+                `;
+            });
+        }
+        
+        function updateWorkouts(workouts) {
+            const container = document.getElementById('workouts-list');
+            
+            if (!workouts || workouts.length === 0) {
+                container.innerHTML = '<div class="loading">No workouts yet. Add your first workout!</div>';
+                return;
+            }
+            
+            let html = '';
+            workouts.slice(0, 5).forEach(w => {
+                const feelingEmoji = w.feeling === 'great' ? '🔥' : 
+                                     w.feeling === 'good' ? '😊' : 
+                                     w.feeling === 'okay' ? '😐' : '😴';
+                html += `
+                    <div style="display: flex; justify-content: space-between; padding: 12px; 
+                                border-bottom: 1px solid var(--border);">
+                        <div>
+                            <span style="font-weight: 600;">${w.type || 'Workout'}</span>
+                            <span style="color: var(--text-dim); margin-left: 8px;">${w.date}</span>
+                        </div>
+                        <div style="text-align: right;">
+                            <span>${w.duration || '--'} min</span>
+                            <span style="color: var(--text-dim); margin-left: 8px;">
+                                ${w.avg_hr ? w.avg_hr + ' bpm' : ''} ${feelingEmoji}
+                            </span>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        // Initial load
+        fetchData();
+        
+        // Refresh every 5 minutes
+        setInterval(fetchData, 300000);
+    </script>
+</body>
+</html>
