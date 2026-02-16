@@ -22,27 +22,33 @@ from planner import ExercisePlanner
 app = Flask(__name__)
 
 # Configuration
-INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://localhost:8086')
-INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN', '')
-INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'tapio')
-INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'health')
+from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
 
-SUUNTO_CLIENT_ID = os.getenv('SUUNTO_CLIENT_ID', '')
-SUUNTO_CLIENT_SECRET = os.getenv('SUUNTO_CLIENT_SECRET', '')
+# Initialize InfluxDB client with fallback
+influx_client = None
+write_api = None
+query_api = None
 
-# Initialize InfluxDB client
 if INFLUXDB_TOKEN:
-    influx_client = InfluxDBClient(
-        url=INFLUXDB_URL,
-        token=INFLUXDB_TOKEN,
-        org=INFLUXDB_ORG
-    )
-    write_api = influx_client.write_api(write_options=SYNCHRONOUS)
-    query_api = influx_client.query_api()
-else:
-    influx_client = None
-    write_api = None
-    query_api = None
+    try:
+        influx_client = InfluxDBClient(
+            url=INFLUXDB_URL,
+            token=INFLUXDB_TOKEN,
+            org=INFLUXDB_ORG
+        )
+        # Quick health check
+        health = influx_client.health()
+        if health.status == "pass":
+            write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+            query_api = influx_client.query_api()
+            print(f"✅ Connected to InfluxDB at {INFLUXDB_URL}")
+        else:
+            print(f"⚠️ InfluxDB health check failed, using demo mode")
+            influx_client = None
+    except Exception as e:
+        print(f"⚠️ Could not connect to InfluxDB: {e}")
+        print("   Running in demo mode with mock data")
+        influx_client = None
 
 # Initialize modules
 suunto = SuuntoClient(SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET)

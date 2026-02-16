@@ -6,9 +6,10 @@ Set these environment variables or edit below
 import os
 
 # InfluxDB Configuration
-INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://localhost:8086')
-INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN', 'your-token-here')
-INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'tapio')
+# Try multiple URLs for Docker networking
+INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://influxdb:8086')
+INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN', 'REMOVED==')
+INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'auroran')
 INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'health')
 
 # Suunto API Configuration
