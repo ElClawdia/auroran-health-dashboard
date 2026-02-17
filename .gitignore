@@ -30,3 +30,7 @@ logs/strava_sync.log'
 # Data
 export.zip
 export.xml
+
+# Temp
+tmp/*
+tmp
