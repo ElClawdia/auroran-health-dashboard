@@ -8,7 +8,7 @@
 
 ---
 
-## Current Status
+## Status
 
 **✅ Working:**
 - **Strava:** 100+ workouts synced (no duplicates)
@@ -21,6 +21,18 @@
 - **CTL (Fitness):** EMA(42 days) of daily load
 - **ATL (Fatigue):** EMA(7 days) of daily load
 - **TSB (Form):** CTL - ATL
+
+---
+
+## Features
+
+- 📊 **Real-time Health Metrics** - HRV, sleep, resting HR, steps tracking
+- 📈 **PMC Charts** - CTL/ATL/TSB 30-day visualization
+- 🧠 **AI Exercise Planner** - Recovery-based workout recommendations
+- 📈 **Beautiful Dashboards** - Dark-theme UI with Chart.js visualizations
+- 🔗 **Strava Integration** - Direct sync with Strava activities
+- 🏃 **Training Periodization** - Recovery/Base/Build/Peak weekly cycles
+- 🎯 **Race Predictor** - Marathon/Half-marathon time predictions
 
 ---
 
@@ -37,7 +49,7 @@
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │              Exercise Planner (AI Recommendations)         │  │
-│  │   - Recovery score based on HRV + Sleep + RHR          │  │
+│  │   - Recovery score based on HRV + Sleep + RHR           │  │
 │  │   - Training load analysis                               │  │
 │  │   - Weekly periodization                                │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -53,13 +65,13 @@ Suunto → (pending API) → InfluxDB → Dashboard
 
 ---
 
-## Features
+## Vision
 
-- 📊 **Real-time Health Metrics** - HRV, sleep, resting HR, steps tracking
-- 📈 **PMC (Performance Management Cycle)** - CTL/ATL/TSB with 30-day charts
-- 🧠 **AI Exercise Planner** - Recovery-based workout recommendations
-- 🎯 **Race Predictor** - Marathon/Half-marathon time predictions
-- 🏃 **Training Periodization** - Recovery/Base/Build/Peak weekly cycles
+A comprehensive health monitoring and exercise planning system that:
+1. Collects data from multiple sources (Strava, Suunto, Garmin, etc.)
+2. Stores in InfluxDB (time-series optimized)
+3. Provides a beautiful web UI for visualization
+4. Generates AI-powered exercise recommendations based on trends
 
 ---
 
@@ -92,14 +104,6 @@ Suunto → (pending API) → InfluxDB → Dashboard
 | elevation_gain | float | Elevation (meters) |
 | suffer_score | float | Strava effort score |
 | name | string | Activity name |
-
-### Measurement: `notes`
-| Field | Type | Description |
-|-------|------|-------------|
-| date | tag | Date |
-| alcohol | boolean | Had alcohol |
-| stress_level | integer | 1-10 |
-| notes | string | Free text |
 
 ---
 
@@ -158,13 +162,12 @@ logs/strava_sync.log
 
 ---
 
-## Vision - Multi-Source Integration
+## Future Integrations
 
-1. **Strava:** ✅ Working - workouts, suffer_score
-2. **Suunto:** Pending API approval - HRV, sleep, resting HR
-3. **Garmin:** Future - Connect API
-4. **Polar:** Future - Flow API
-5. **Oura:** Future - Sleep, readiness
+- **Suunto:** HRV, sleep, resting HR (API pending)
+- **Garmin:** Connect API → activities, health metrics
+- **Polar:** Flow API → training load
+- **Oura:** Sleep, readiness, recovery score
 
 ---
 
