@@ -270,3 +270,191 @@
 2026-02-17 09:16:17,446 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:16:17] "GET /api/pmc?days=60 HTTP/1.1" 200 -
 2026-02-17 09:16:17,467 INFO __main__: Fetching workouts
 2026-02-17 09:16:17,620 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:16:17] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:18:07,608 INFO __main__: Fetching today's health metrics
+2026-02-17 09:18:07,637 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:18:07] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:18:07,664 INFO __main__: Fetching health history
+2026-02-17 09:18:07,700 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:18:07] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:18:07,719 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:18:07] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:18:07,736 INFO __main__: Fetching PMC data
+2026-02-17 09:18:07,790 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:18:07,791 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:18:07] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:18:07,808 INFO __main__: Fetching workouts
+2026-02-17 09:18:07,919 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:18:07] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:20:10,173 INFO __main__: Fetching today's health metrics
+2026-02-17 09:20:10,212 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:20:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:20:10,229 INFO __main__: Fetching health history
+2026-02-17 09:20:10,327 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:20:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:20:10,407 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:20:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:20:10,482 INFO __main__: Fetching PMC data
+2026-02-17 09:20:10,583 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:20:10,586 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:20:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:20:10,601 INFO __main__: Fetching workouts
+2026-02-17 09:20:10,761 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:20:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:21:10,181 INFO __main__: Fetching today's health metrics
+2026-02-17 09:21:10,208 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:21:10,225 INFO __main__: Fetching health history
+2026-02-17 09:21:10,255 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:21:10,351 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:21:10,365 INFO __main__: Fetching PMC data
+2026-02-17 09:21:10,410 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:21:10,411 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:21:10,426 INFO __main__: Fetching workouts
+2026-02-17 09:21:10,519 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:21:17,188 INFO __main__: Fetching today's health metrics
+2026-02-17 09:21:17,211 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:17] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:21:17,229 INFO __main__: Fetching health history
+2026-02-17 09:21:17,256 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:17] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:21:17,309 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:17] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:21:17,323 INFO __main__: Fetching PMC data
+2026-02-17 09:21:17,366 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:21:17,368 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:17] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:21:17,384 INFO __main__: Fetching workouts
+2026-02-17 09:21:17,477 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:21:17] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:23:07,611 INFO __main__: Fetching today's health metrics
+2026-02-17 09:23:07,635 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:23:07] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:23:07,662 INFO __main__: Fetching health history
+2026-02-17 09:23:07,691 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:23:07] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:23:07,716 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:23:07] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:23:07,731 INFO __main__: Fetching PMC data
+2026-02-17 09:23:07,774 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:23:07,775 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:23:07] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:23:07,792 INFO __main__: Fetching workouts
+2026-02-17 09:23:07,881 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:23:07] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:25:10,186 INFO __main__: Fetching today's health metrics
+2026-02-17 09:25:10,215 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:25:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:25:10,234 INFO __main__: Fetching health history
+2026-02-17 09:25:10,274 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:25:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:25:10,323 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:25:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:25:10,341 INFO __main__: Fetching PMC data
+2026-02-17 09:25:10,394 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:25:10,395 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:25:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:25:10,415 INFO __main__: Fetching workouts
+2026-02-17 09:25:10,524 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:25:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:26:10,175 INFO __main__: Fetching today's health metrics
+2026-02-17 09:26:10,197 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:26:10,214 INFO __main__: Fetching health history
+2026-02-17 09:26:10,238 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:26:10,297 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:26:10,309 INFO __main__: Fetching PMC data
+2026-02-17 09:26:10,347 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:26:10,349 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:26:10,363 INFO __main__: Fetching workouts
+2026-02-17 09:26:10,443 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:26:17,181 INFO __main__: Fetching today's health metrics
+2026-02-17 09:26:17,197 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:17] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:26:17,213 INFO __main__: Fetching health history
+2026-02-17 09:26:17,231 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:17] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:26:17,264 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:17] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:26:17,286 INFO __main__: Fetching PMC data
+2026-02-17 09:26:17,314 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:26:17,315 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:17] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:26:17,328 INFO __main__: Fetching workouts
+2026-02-17 09:26:17,387 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:26:17] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:28:07,611 INFO __main__: Fetching today's health metrics
+2026-02-17 09:28:07,722 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:28:07] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:28:07,752 INFO __main__: Fetching health history
+2026-02-17 09:28:07,823 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:28:07] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:28:07,857 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:28:07] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:28:07,880 INFO __main__: Fetching PMC data
+2026-02-17 09:28:08,101 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:28:08,104 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:28:08] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:28:08,139 INFO __main__: Fetching workouts
+2026-02-17 09:28:08,786 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:28:08] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:30:10,173 INFO __main__: Fetching today's health metrics
+2026-02-17 09:30:10,202 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:30:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:30:10,219 INFO __main__: Fetching health history
+2026-02-17 09:30:10,261 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:30:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:30:10,307 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:30:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:30:10,321 INFO __main__: Fetching PMC data
+2026-02-17 09:30:10,391 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:30:10,392 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:30:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:30:10,406 INFO __main__: Fetching workouts
+2026-02-17 09:30:10,541 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:30:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:31:10,178 INFO __main__: Fetching today's health metrics
+2026-02-17 09:31:10,192 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:31:10,207 INFO __main__: Fetching health history
+2026-02-17 09:31:10,224 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:31:10,325 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:31:10,338 INFO __main__: Fetching PMC data
+2026-02-17 09:31:10,363 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:31:10,364 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:31:10,378 INFO __main__: Fetching workouts
+2026-02-17 09:31:10,429 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:31:17,198 INFO __main__: Fetching today's health metrics
+2026-02-17 09:31:17,235 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:17] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:31:17,251 INFO __main__: Fetching health history
+2026-02-17 09:31:17,282 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:17] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:31:17,322 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:17] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:31:17,342 INFO __main__: Fetching PMC data
+2026-02-17 09:31:17,410 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:31:17,412 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:17] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:31:17,430 INFO __main__: Fetching workouts
+2026-02-17 09:31:17,534 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:31:17] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:33:07,612 INFO __main__: Fetching today's health metrics
+2026-02-17 09:33:07,650 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:33:07] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:33:07,670 INFO __main__: Fetching health history
+2026-02-17 09:33:07,700 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:33:07] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:33:07,727 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:33:07] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:33:07,743 INFO __main__: Fetching PMC data
+2026-02-17 09:33:07,789 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:33:07,790 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:33:07] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:33:07,811 INFO __main__: Fetching workouts
+2026-02-17 09:33:07,907 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:33:07] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:35:10,174 INFO __main__: Fetching today's health metrics
+2026-02-17 09:35:10,198 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:35:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:35:10,212 INFO __main__: Fetching health history
+2026-02-17 09:35:10,244 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:35:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:35:10,284 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:35:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:35:10,300 INFO __main__: Fetching PMC data
+2026-02-17 09:35:10,354 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:35:10,355 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:35:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:35:10,370 INFO __main__: Fetching workouts
+2026-02-17 09:35:10,463 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:35:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:36:10,175 INFO __main__: Fetching today's health metrics
+2026-02-17 09:36:10,208 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:36:10,223 INFO __main__: Fetching health history
+2026-02-17 09:36:10,258 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:36:10,353 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:36:10,366 INFO __main__: Fetching PMC data
+2026-02-17 09:36:10,441 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:36:10,443 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:36:10,459 INFO __main__: Fetching workouts
+2026-02-17 09:36:10,577 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:10] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:36:17,203 INFO __main__: Fetching today's health metrics
+2026-02-17 09:36:17,224 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:17] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:36:17,244 INFO __main__: Fetching health history
+2026-02-17 09:36:17,267 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:17] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:36:17,327 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:17] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:36:17,346 INFO __main__: Fetching PMC data
+2026-02-17 09:36:17,381 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:36:17,382 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:17] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:36:17,399 INFO __main__: Fetching workouts
+2026-02-17 09:36:17,472 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:36:17] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:38:07,619 INFO __main__: Fetching today's health metrics
+2026-02-17 09:38:07,643 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:38:07] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:38:07,666 INFO __main__: Fetching health history
+2026-02-17 09:38:07,693 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:38:07] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:38:07,714 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:38:07] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:38:07,729 INFO __main__: Fetching PMC data
+2026-02-17 09:38:07,772 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:38:07,774 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:38:07] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:38:07,793 INFO __main__: Fetching workouts
+2026-02-17 09:38:07,882 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:38:07] "GET /api/workouts HTTP/1.1" 200 -
+2026-02-17 09:39:40,892 INFO werkzeug:  * Detected change in '/home/node/.openclaw/workspace/health-dashboard/renew-strava-tokens/renew_strava_token.py', reloading
+2026-02-17 09:39:42,508 INFO config: Using InfluxDB URL: http://influxdb:8086
+2026-02-17 09:39:42,508 INFO config: Strava token configured: False
+2026-02-17 09:39:42,508 INFO config: Strava refresh configured: False
+2026-02-17 09:39:42,520 INFO __main__: Connected to InfluxDB at http://influxdb:8086
+2026-02-17 09:39:42,528 INFO __main__: Starting Health Dashboard on port 5000
+2026-02-17 09:39:42,541 WARNING werkzeug:  * Debugger is active!
+2026-02-17 09:39:42,542 INFO werkzeug:  * Debugger PIN: 978-785-653
+2026-02-17 09:40:10,190 INFO __main__: Fetching today's health metrics
+2026-02-17 09:40:10,220 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:40:10] "GET /api/health/today HTTP/1.1" 200 -
+2026-02-17 09:40:10,240 INFO __main__: Fetching health history
+2026-02-17 09:40:10,271 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:40:10] "GET /api/health/history?days=30 HTTP/1.1" 200 -
+2026-02-17 09:40:10,344 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:40:10] "GET /api/recommendations/today HTTP/1.1" 200 -
+2026-02-17 09:40:10,359 INFO __main__: Fetching PMC data
+2026-02-17 09:40:10,399 INFO __main__: Loaded 58 days of training load from InfluxDB workouts
+2026-02-17 09:40:10,400 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:40:10] "GET /api/pmc?days=60 HTTP/1.1" 200 -
+2026-02-17 09:40:10,415 INFO __main__: Fetching workouts
+2026-02-17 09:40:10,495 INFO werkzeug: 172.19.0.1 - - [17/Feb/2026 09:40:10] "GET /api/workouts HTTP/1.1" 200 -

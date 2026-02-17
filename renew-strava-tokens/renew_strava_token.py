@@ -50,8 +50,8 @@ def load_secrets() -> dict:
 # Load config once
 secrets = load_secrets()
 
-CLIENT_ID       = secrets["client_id"]
-CLIENT_SECRET   = secrets["client_secret"]
+CLIENT_ID       = os.getenv("STRAVA_CLIENT_ID", secrets["client_id"])
+CLIENT_SECRET   = os.getenv("STRAVA_CLIENT_SECRET", secrets["client_secret"])
 TOKEN_FILE      = Path(secrets["token_file"])
 REFRESH_THRESHOLD = secrets.get("refresh_threshold_seconds", 600)
 

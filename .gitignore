@@ -5,6 +5,7 @@
 # Secrets (API keys)
 secrets.yaml
 secrets.json
+passwords.txt
 
 # Python
 __pycache__/
