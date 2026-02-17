@@ -27,3 +27,6 @@ logs/health-dashboard.log'
 logs/strava_sync.log'
 *.log
 
+# Data
+export.zip
+export.xml
