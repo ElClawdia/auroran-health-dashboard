@@ -39,7 +39,11 @@ SUUNTO_CLIENT_SECRET = get_secret('suunto_client_secret', '')
 
 # Strava API Configuration
 STRAVA_ACCESS_TOKEN = get_secret('strava_access_token', '')
+STRAVA_CLIENT_ID = get_secret('strava_client_id', '')
+STRAVA_CLIENT_SECRET = get_secret('strava_client_secret', '')
+STRAVA_REFRESH_TOKEN = get_secret('strava_refresh_token', '')
 logger.info(f"Strava token configured: {bool(STRAVA_ACCESS_TOKEN)}")
+logger.info(f"Strava refresh configured: {bool(STRAVA_REFRESH_TOKEN)}")
 
 # Garmin (no personal API - sync via Strava recommended)
 GARMIN_USERNAME = get_secret('garmin_username', '')

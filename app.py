@@ -17,12 +17,21 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 import pandas as pd
 
 # Configure logging with timestamps
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+# Create logs directory
+log_dir = Path(__file__).parent / "logs"
+log_dir.mkdir(exist_ok=True)
+
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('/home/node/.openclaw/workspace/health-dashboard/app.log', mode='a')
+        RotatingFileHandler(log_dir / "health-dashboard.log", maxBytes=10*1024*1024, backupCount=5)
     ]
 )
 logger = logging.getLogger(__name__)
@@ -31,13 +40,14 @@ logger = logging.getLogger(__name__)
 from suunto_client import SuuntoClient
 from strava_client import StravaClient, MockStravaClient
 from planner import ExercisePlanner
+from training_load import calculate_training_load, calculate_ctl_atl_tsb, get_status_description
 
 app = Flask(__name__)
 
 # Configuration
 from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
 from config import SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET
-from config import STRAVA_ACCESS_TOKEN
+from config import STRAVA_ACCESS_TOKEN, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN
 
 # Initialize InfluxDB client with fallback
 influx_client = None
@@ -67,7 +77,12 @@ if INFLUXDB_TOKEN:
 
 # Initialize modules
 suunto = SuuntoClient(SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET)
-strava = StravaClient(STRAVA_ACCESS_TOKEN) if STRAVA_ACCESS_TOKEN else MockStravaClient()
+strava = StravaClient(
+    access_token=STRAVA_ACCESS_TOKEN,
+    client_id=STRAVA_CLIENT_ID,
+    client_secret=STRAVA_CLIENT_SECRET,
+    refresh_token=STRAVA_REFRESH_TOKEN
+) if STRAVA_ACCESS_TOKEN else MockStravaClient()
 planner = ExercisePlanner()
 
 # Generate mock data for demo mode
@@ -132,9 +147,7 @@ def health_today():
     """Get today's health metrics"""
     logger.info("Fetching today's health metrics")
     if not query_api:
-        # Return mock data for demo
-        logger.info("Using mock data for today's health (no InfluxDB)")
-        return jsonify(get_mock_health_today())
+        return jsonify({"error": "InfluxDB not configured"}), 500
     
     try:
         query = f'''
@@ -187,7 +200,7 @@ def health_history():
     if not query_api:
         # Return mock data for demo
         logger.info("Using mock data for history (no InfluxDB)")
-        return jsonify(get_mock_history(days))
+        return jsonify({"error": "No data from InfluxDB"}), 404
     
     try:
         query = f'''
@@ -200,7 +213,7 @@ def health_history():
         
         if result.empty or len(result) == 0:
             # Return mock trend data
-            return jsonify(get_mock_history(days))
+            return jsonify({"error": "No data from InfluxDB"}), 404
             return jsonify({
                 "dates": dates,
                 "hrv": [30 + i + (i % 7) for i in range(days)],
@@ -232,50 +245,43 @@ def workouts():
         if not query_api:
             # Return mock data for demo
             logger.info("Using mock workouts (no InfluxDB)")
-            return jsonify(get_mock_workouts())
+            return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
+            # Get last 365 days of workouts from InfluxDB
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -30d)
+              |> range(start: -365d)
               |> filter(fn: (r) => r._measurement == "workouts")
+              |> filter(fn: (r) => r._field != "date")
               |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
             '''
-            # Prefer Strava data when configured (more complete)
-            if strava.is_configured:
-                activities = strava.get_activities(30)  # Get enough for filtering
-                # Take last 10 workouts
-                activities = activities[:10]
-                return jsonify([{
-                    "id": a.get("id", 0),
-                    "date": a.get("date", ""),
-                    "time": a.get("time", ""),
-                    "name": a.get("name", ""),
-                    "type": a.get("type", "Unknown"),
-                    "duration": a.get("duration", 0),
-                    "distance": a.get("distance", 0),
-                    "elevation_gain": a.get("elevation_gain", 0),
-                    "avg_hr": a.get("avg_hr", 0),
-                    "max_hr": a.get("max_hr", 0),
-                    "suffer_score": a.get("suffer_score", 0),
-                    "feeling": a.get("feeling", "good")
-                } for a in activities])
-            
+            # Always read from InfluxDB only (Strava → InfluxDB → Dashboard)
             result = query_api.query_data_frame(query)
             
-            if result.empty or len(result) == 0:
-                # Mock data
-                return jsonify(get_mock_workouts())
+            # Handle both list and DataFrame returns
+            if isinstance(result, list):
+                if len(result) == 0:
+                    return jsonify({"error": "No workouts from InfluxDB"}), 404
+                import pandas as pd
+                result = pd.concat(result, ignore_index=True) if all(hasattr(r, 'empty') for r in result) else result
+            elif hasattr(result, 'empty') and result.empty:
+                return jsonify({"error": "No workouts from InfluxDB"}), 404
             
-            return jsonify(result.to_dict(orient='records'))
+            # Sort by date descending (newest first)
+            records = result.to_dict(orient='records')
+            records.sort(key=lambda x: str(x.get('date', '')), reverse=True)
+            return jsonify(records)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
     
     # POST - Log new workout
     if not write_api:
+        logger.warning("Cannot log workout: InfluxDB not configured")
         return jsonify({"error": "InfluxDB not configured"}), 500
     
     data = request.json
+    logger.info(f"Logging workout: {data.get('type')} - {data.get('date')}")
     try:
         point = Point("workouts")\
             .tag("type", data.get("type", "Unknown"))\
@@ -288,8 +294,10 @@ def workouts():
             .field("feeling", data.get("feeling", "okay"))
         
         write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+        logger.info(f"Workout logged successfully: {data.get('type')}")
         return jsonify({"success": True})
     except Exception as e:
+        logger.error(f"Error logging workout: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -307,11 +315,14 @@ def recommendations_today():
 @app.route('/api/suunto/sync')
 def suunto_sync():
     """Sync data from Suunto API"""
+    logger.info("Starting Suunto sync")
     if not suunto.is_configured:
+        logger.warning("Suunto not configured")
         return jsonify({"error": "Suunto not configured"}), 500
     
     try:
         data = suunto.get_daily_summaries(days=7)
+        logger.info(f"Suunto returned {len(data) if data else 0} days of data")
         
         if write_api and data:
             for day in data:
@@ -323,23 +334,28 @@ def suunto_sync():
                     .field("steps", day.get("steps", 0))
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            logger.info(f"Synced {len(data)} days to InfluxDB")
         
         return jsonify({"synced": len(data) if data else 0, "data": data})
     except Exception as e:
+        logger.error(f"Error syncing Suunto: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/strava/sync')
 def strava_sync():
     """Sync workouts from Strava API"""
+    logger.info("Starting Strava sync")
     days = request.args.get('days', 30, type=int)
     
     if not strava.is_configured:
         # Return mock data
+        logger.info("Strava not configured, using demo mode")
         mock_workouts = MockStravaClient().get_activities(days)
         return jsonify({"synced": len(mock_workouts), "data": mock_workouts, "mode": "demo"})
     
     if not write_api:
+        logger.warning("InfluxDB not configured for Strava sync")
         return jsonify({"error": "InfluxDB not configured"}), 500
     
     try:
@@ -359,9 +375,79 @@ def strava_sync():
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
         
+        logger.info(f"Synced {len(activities) if activities else 0} activities to InfluxDB")
         return jsonify({"synced": len(activities) if activities else 0, "data": activities})
     except Exception as e:
+        logger.error(f"Error syncing Strava: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pmc')
+def pmc():
+    """
+    Get Performance Management Chart data (CTL, ATL, TSB)
+    This calculates fitness, strain, and form from training load
+    """
+    logger.info("Fetching PMC data")
+    # Always query enough days to get full range
+    days = request.args.get('days', 90, type=int)
+    
+    # For weekly view (ATL), use current week (Mon-Sun)
+    from datetime import datetime, timedelta
+    today = datetime.now()
+    # Find start of current week (Monday)
+    week_start = today - timedelta(days=today.weekday())
+    week_start_str = week_start.strftime("%Y-%m-%d")
+    
+    query_days = max(days, 42)  # Always at least 42 for CTL
+    
+    # Read training load from InfluxDB workouts only (never from Strava)
+    daily_loads = []
+    
+    if query_api:
+        try:
+            # Get suffer_score from workouts to calculate training load
+            query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: -{query_days}d)
+              |> filter(fn: (r) => r._measurement == "workouts")
+              |> filter(fn: (r) => r._field == "suffer_score")
+              |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+            '''
+            result = query_api.query_data_frame(query)
+            if not result.empty and 'suffer_score' in result.columns:
+                # Group by date and sum suffer_score (as proxy for training load)
+                from collections import defaultdict
+                by_date = defaultdict(float)
+                for _, row in result.iterrows():
+                    date = row.get('date', '')
+                    load = row.get('suffer_score', 0)
+                    if date and load:
+                        by_date[date] += float(load)
+                daily_loads = [{"date": d, "load": l} for d, l in sorted(by_date.items())]
+                logger.info(f"Loaded {len(daily_loads)} days of training load from InfluxDB workouts")
+        except Exception as e:
+            logger.error(f"Error fetching PMC data from InfluxDB: {e}")
+    
+    # No mock data - return error if nothing from InfluxDB
+    if not daily_loads:
+        return jsonify({"error": "No training load data from InfluxDB"}), 404
+    
+    # Calculate PMC metrics
+    pmc = calculate_ctl_atl_tsb(daily_loads)
+    
+    # Get recent loads for chart
+    recent_loads = daily_loads[-14:] if len(daily_loads) > 14 else daily_loads
+    
+    return jsonify({
+        "ctl": pmc["ctl"],
+        "atl": pmc["atl"],
+        "tsb": pmc["tsb"],
+        "status": pmc["status"],
+        "description": get_status_description(pmc["tsb"]),
+        "recent_loads": recent_loads,
+        "days_tracked": len(daily_loads)
+    })
 
 
 @app.route('/api/trends')
@@ -394,4 +480,5 @@ def trends():
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
+    logger.info(f"Starting Health Dashboard on port {port}")
     app.run(host='0.0.0.0', port=port, debug=True)

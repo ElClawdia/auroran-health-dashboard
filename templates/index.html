@@ -347,6 +347,25 @@
             </div>
         </div>
         
+        <!-- PMC / Training Load -->
+        <div class="grid">
+            <div class="card" style="border-color: var(--primary);">
+                <div class="card-label">💪 CTL (Fitness)</div>
+                <div class="card-value" id="ctl-value">--</div>
+                <div class="card-trend" style="color: var(--text-dim);">42-day avg</div>
+            </div>
+            <div class="card" style="border-color: var(--warning);">
+                <div class="card-label">🔥 ATL (Strain)</div>
+                <div class="card-value" id="atl-value">--</div>
+                <div class="card-trend" style="color: var(--text-dim);">7-day avg</div>
+            </div>
+            <div class="card" id="tsb-card">
+                <div class="card-label">⚖️ TSB (Form)</div>
+                <div class="card-value" id="tsb-value">--</div>
+                <div class="card-trend" id="tsb-status">Loading...</div>
+            </div>
+        </div>
+        
         <!-- Charts -->
         <div class="chart-card">
             <div class="chart-title">📈 30-Day Health Trends</div>
@@ -445,6 +464,11 @@
                 const recRes = await fetch('/api/recommendations/today');
                 const recommendation = await recRes.json();
                 updateRecommendation(recommendation);
+                
+                // Fetch PMC (Training Load)
+                const pmcRes = await fetch('/api/pmc?days=60');
+                const pmc = await pmcRes.json();
+                updatePMC(pmc);
                 
                 // Fetch weekly plan
                 const weekPlan = recommendation.alternatives ? generateWeekPlan(recommendation) : [];
@@ -632,6 +656,39 @@
                 'Rest is essential';
         }
         
+        function updatePMC(data) {
+            // CTL (Fitness) - 42 day average
+            document.getElementById('ctl-value').textContent = data.ctl || '--';
+            
+            // ATL (Strain) - 7 day average
+            document.getElementById('atl-value').textContent = data.atl || '--';
+            
+            // TSB (Form) = CTL - ATL
+            const tsbCard = document.getElementById('tsb-card');
+            const tsbValue = document.getElementById('tsb-value');
+            const tsbStatus = document.getElementById('tsb-status');
+            
+            if (data.tsb !== undefined) {
+                const tsb = data.tsb;
+                tsbValue.textContent = tsb > 0 ? '+' + tsb : tsb;
+                
+                // Color code based on TSB
+                if (tsb > 10) {
+                    tsbCard.style.borderColor = '#3fb950'; // Green - fresh
+                    tsbStatus.innerHTML = '<span style="color: #3fb950;">' + data.status + '</span>';
+                } else if (tsb > -10) {
+                    tsbCard.style.borderColor = '#d29922'; // Yellow - balanced
+                    tsbStatus.innerHTML = '<span style="color: #d29922;">' + data.status + '</span>';
+                } else {
+                    tsbCard.style.borderColor = '#f85149'; // Red - fatigued
+                    tsbStatus.innerHTML = '<span style="color: #f85149;">' + data.status + '</span>';
+                }
+            } else {
+                tsbValue.textContent = '--';
+                tsbStatus.textContent = 'No data';
+            }
+        }
+        
         function generateWeekPlan(recommendation) {
             const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
             const plan = [];
@@ -703,7 +760,7 @@
                 const elevation = w.elevation_gain ? Math.round(w.elevation_gain) + 'm' : '';
                 const effort = w.suffer_score ? Math.round(w.suffer_score) : '';
                 const hr = w.avg_hr ? Math.round(w.avg_hr) : '';
-                const time = w.time ? w.time : '';
+                const time = w.time ? w.time : (w.start_time ? w.start_time : '');
                 const name = w.name ? w.name : w.type;
                 
                 const dur = (w.duration || w.duration_minutes || '--') + ' min';
@@ -712,7 +769,7 @@
                 const heart = hr ? hr + ' bpm' : '';
                 
                 // Mobile-friendly card layout
-                const stravaUrl = w.id ? `https://www.strava.com/activities/${w.id}` : '';
+                const stravaUrl = w.strava_id ? `https://www.strava.com/activities/${w.strava_id}` : '';
                 const workoutLink = stravaUrl ? `<a href="${stravaUrl}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">${name}</a>` : name;
                 
                 html += `

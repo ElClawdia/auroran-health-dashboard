@@ -14,13 +14,47 @@ class StravaClient:
     """Client for Strava API integration"""
     
     BASE_URL = "https://www.strava.com/api/v3"
+    TOKEN_URL = "https://www.strava.com/oauth/token"
     
-    def __init__(self, access_token: str = ""):
+    def __init__(self, access_token: str = "", client_id: str = "", client_secret: str = "", refresh_token: str = ""):
         self.access_token = access_token or os.getenv('STRAVA_ACCESS_TOKEN', '')
+        self.client_id = client_id or os.getenv('STRAVA_CLIENT_ID', '')
+        self.client_secret = client_secret or os.getenv('STRAVA_CLIENT_SECRET', '')
+        self.refresh_token = refresh_token or os.getenv('STRAVA_REFRESH_TOKEN', '')
     
     @property
     def is_configured(self) -> bool:
         return bool(self.access_token)
+    
+    def refresh_access_token(self) -> bool:
+        """Refresh the access token using refresh_token"""
+        if not all([self.client_id, self.client_secret, self.refresh_token]):
+            print("ERROR: Missing client_id, client_secret, or refresh_token for token refresh")
+            return False
+        
+        try:
+            response = requests.post(
+                self.TOKEN_URL,
+                data={
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": self.refresh_token
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.access_token = data.get("access_token", "")
+                self.refresh_token = data.get("refresh_token", "")
+                print(f"✓ Strava token refreshed successfully")
+                return True
+            else:
+                print(f"ERROR: Token refresh failed: {response.status_code} - {response.text}")
+                return False
+        except Exception as e:
+            print(f"ERROR: Token refresh exception: {e}")
+            return False
     
     def _request(self, endpoint: str, params: dict = None) -> dict:
         """Make authenticated API request"""
@@ -40,6 +74,19 @@ class StravaClient:
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 401:
+                # Token expired - try to refresh
+                if self.refresh_access_token():
+                    # Retry with new token
+                    response = requests.get(
+                        f"{self.BASE_URL}{endpoint}",
+                        params=params,
+                        headers={
+                            "Authorization": f"Bearer {self.access_token}",
+                            "Content-Type": "application/json"
+                        }
+                    )
+                    if response.status_code == 200:
+                        return response.json()
                 return {"error": "Invalid access token"}
             else:
                 return {"error": f"API error: {response.status_code}"}
@@ -77,7 +124,8 @@ class StravaClient:
                 "calories": activity.get("calories"),
                 "elevation_gain": activity.get("total_elevation_gain"),
                 "suffer_score": activity.get("suffer_score", 0),
-                "Feeling": self._guess_feeling(activity)
+                "relative_effort": activity.get("suffer_score", 0),  # Strava's Relative Effort
+                "feeling": self._guess_feeling(activity)
             })
         
         return activities
