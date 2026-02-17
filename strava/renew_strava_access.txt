@@ -1,5 +1,0 @@
-https://www.strava.com/oauth/authorize?client_id=17398&response_type=code&redirect_uri=http://auroranrunner.com/exchange_token&approval_prompt=force&scope=activity:read_all
-
-
-
-https://www.strava.com/oauth/authorize?client_id=17398&response_type=code&redirect_uri=http://auroranrunner.com/&approval_prompt=force&scope=activity:read_all
