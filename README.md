@@ -162,8 +162,17 @@ logs/strava_sync.log
 
 ---
 
-## Future Integrations
+## Apple Health Integration
 
+Export your Apple Health data from iPhone and sync to InfluxDB:
+
+1. **Export:** Use "Export Health Data" on iPhone (Health app → Profile → Export All Health Data)
+2. **Convert:** Use `apple_health_sync.py` to parse the XML export
+3. **Sync:** Data flows to InfluxDB → Dashboard
+
+The dashboard filters to only show recent data (last 90 days) with actual HRV values for performance.
+
+- **Apple Health:** Export from iPhone, sync to InfluxDB
 - **Suunto:** HRV, sleep, resting HR (API pending)
 - **Garmin:** Connect API → activities, health metrics
 - **Polar:** Flow API → training load
