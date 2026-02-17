@@ -21,3 +21,9 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Logs
+logs/health-dashboard.log'
+logs/strava_sync.log'
+*.log
+
