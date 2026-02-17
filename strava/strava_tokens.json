@@ -1,5 +1,5 @@
 {
-  "access_token": "***REMOVED***",
-  "refresh_token": "***REMOVED***",
-  "expires_at": ***REMOVED***
+  "access_token": "dummy-access-token-for-dev-only",
+  "refresh_token": "dummy-refresh-token-for-dev-only",
+  "expires_at": 0
 }

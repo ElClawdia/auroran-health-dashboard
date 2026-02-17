@@ -24,7 +24,7 @@ def load_secrets() -> dict:
         print(f"Error: {SECRETS_FILE} not found", file=sys.stderr)
         print("Create it with this structure:", file=sys.stderr)
         print('''{
-  "client_id": "***REMOVED***",
+  "client_id": "17398",
   "client_secret": "your-real-client-secret-here",
   "token_file": "strava_tokens.json",
   "refresh_threshold_seconds": 600
@@ -63,7 +63,7 @@ def load_tokens() -> dict:
         print('''{
   "access_token": "...",
   "refresh_token": "...",
-  "expires_at": ***REMOVED***
+  "expires_at": 1771330760
 }''', file=sys.stderr)
         sys.exit(1)
 
