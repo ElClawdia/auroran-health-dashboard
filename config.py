@@ -24,7 +24,9 @@ if SECRETS_FILE.exists():
 
 def get_secret(key, default=''):
     """Get secret from env var or secrets file"""
-    return os.getenv(key, secrets.get(key, default))
+    # Support conventional uppercase env vars (e.g. INFLUXDB_TOKEN) while keeping
+    # existing secrets.json keys (e.g. influxdb_token).
+    return os.getenv(key) or os.getenv(key.upper()) or secrets.get(key, default)
 
 # InfluxDB Configuration
 INFLUXDB_URL = os.getenv('INFLUXDB_URL', get_secret('influxdb_url', 'http://influxdb:8086'))
