@@ -34,3 +34,8 @@ export.xml
 # Temp
 tmp/*
 tmp
+
+# Data
+apple-health-data
+apple-health-data/
+apple-health-data/*
