@@ -27,3 +27,7 @@ logs/health-dashboard.log'
 logs/strava_sync.log'
 *.log
 
+#Data
+apple_health_export/
+apple_health_export/*
+apple_health_export

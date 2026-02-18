@@ -366,6 +366,14 @@
             </div>
         </div>
         
+        <!-- PMC 30-day Chart -->
+        <div class="chart-card">
+            <div class="chart-title">📊 PMC - Performance Management (30-Day)</div>
+            <div class="chart-container">
+                <canvas id="pmcChart"></canvas>
+            </div>
+        </div>
+
         <!-- Charts -->
         <div class="chart-card">
             <div class="chart-title">📈 30-Day Health Trends</div>
@@ -447,6 +455,7 @@
     <script>
         // Chart configuration
         let trendsChart = null;
+        let pmcChart = null;
         
         async function fetchData() {
             try {
@@ -466,7 +475,7 @@
                 updateRecommendation(recommendation);
                 
                 // Fetch PMC (Training Load)
-                const pmcRes = await fetch('/api/pmc?days=60');
+                const pmcRes = await fetch('/api/pmc?days=30');
                 const pmc = await pmcRes.json();
                 updatePMC(pmc);
                 
@@ -521,14 +530,20 @@
                 trendsChart.destroy();
             }
             
+            const dates = (data.dates || []).slice(-30);
+            const hrv = (data.hrv || []).slice(-30);
+            const restingHr = (data.resting_hr || []).slice(-30);
+            const sleep = (data.sleep || []).slice(-30);
+            const steps = (data.steps || []).slice(-30);
+
             trendsChart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: data.dates.slice(-30).map(d => d.slice(5)),
+                    labels: dates.map(d => d.slice(5)),
                     datasets: [
                         {
                             label: 'HRV (ms)',
-                            data: data.hrv,
+                            data: hrv,
                             borderColor: '#3fb950',
                             backgroundColor: 'rgba(63, 185, 80, 0.1)',
                             fill: true,
@@ -536,7 +551,7 @@
                         },
                         {
                             label: 'Resting HR (bpm)',
-                            data: data.resting_hr,
+                            data: restingHr,
                             borderColor: '#f85149',
                             backgroundColor: 'rgba(248, 81, 73, 0.1)',
                             fill: true,
@@ -545,12 +560,21 @@
                         },
                         {
                             label: 'Sleep (h)',
-                            data: data.sleep,
+                            data: sleep,
                             borderColor: '#58a6ff',
                             backgroundColor: 'rgba(88, 166, 255, 0.1)',
                             fill: true,
                             tension: 0.4,
                             yAxisID: 'y2'
+                        },
+                        {
+                            label: 'Steps',
+                            data: steps,
+                            borderColor: '#a371f7',
+                            backgroundColor: 'rgba(163, 113, 247, 0.1)',
+                            fill: false,
+                            tension: 0.35,
+                            yAxisID: 'y3'
                         }
                     ]
                 },
@@ -591,6 +615,14 @@
                             ticks: { color: '#58a6ff', callback: v => v + 'h' },
                             grid: { drawOnChartArea: false },
                             title: { display: true, text: 'Sleep (h)', color: '#58a6ff' }
+                        },
+                        y3: {
+                            type: 'linear',
+                            position: 'right',
+                            offset: true,
+                            ticks: { color: '#a371f7', callback: v => Number(v).toLocaleString() },
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: 'Steps', color: '#a371f7' }
                         }
                     }
                 }
@@ -687,6 +719,80 @@
                 tsbValue.textContent = '--';
                 tsbStatus.textContent = 'No data';
             }
+
+            updatePMCChart(data.chart || {});
+        }
+
+        function updatePMCChart(chart) {
+            const canvas = document.getElementById('pmcChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            if (pmcChart) {
+                pmcChart.destroy();
+            }
+
+            const dates = (chart.dates || []).slice(-30);
+            const ctl = (chart.ctl || []).slice(-30);
+            const atl = (chart.atl || []).slice(-30);
+            const tsb = (chart.tsb || []).slice(-30);
+
+            pmcChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates.map(d => d.slice(5)),
+                    datasets: [
+                        {
+                            label: 'CTL (Fitness)',
+                            data: ctl,
+                            borderColor: '#58a6ff',
+                            backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                            tension: 0.35,
+                            fill: false
+                        },
+                        {
+                            label: 'ATL (Strain)',
+                            data: atl,
+                            borderColor: '#d29922',
+                            backgroundColor: 'rgba(210, 153, 34, 0.1)',
+                            tension: 0.35,
+                            fill: false
+                        },
+                        {
+                            label: 'TSB (Form)',
+                            data: tsb,
+                            borderColor: '#3fb950',
+                            backgroundColor: 'rgba(63, 185, 80, 0.1)',
+                            tension: 0.35,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#c9d1d9' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#8b949e' },
+                            grid: { color: '#30363d' }
+                        },
+                        y: {
+                            ticks: { color: '#c9d1d9' },
+                            grid: { color: '#30363d' },
+                            title: { display: true, text: 'Training Load', color: '#8b949e' }
+                        }
+                    }
+                }
+            });
         }
         
         function generateWeekPlan(recommendation) {

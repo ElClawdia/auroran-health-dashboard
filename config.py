@@ -51,8 +51,8 @@ GARMIN_PASSWORD = get_secret('garmin_password', '')
 
 # Flask Configuration
 FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
-FLASK_PORT = int(os.getenv('PORT', 5000))
-FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+FLASK_PORT = int(os.getenv('PORT', get_secret('port', 5000)))
+FLASK_DEBUG = os.getenv('FLASK_DEBUG', str(get_secret('flask_debug', False))).lower() == 'true'
 
 # Demo Mode (if no InfluxDB configured)
 DEMO_MODE = not INFLUXDB_TOKEN
