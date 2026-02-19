@@ -95,18 +95,36 @@ class StravaClient:
     
     def get_activities(self, days: int = 30) -> List[Dict]:
         """
-        Get recent activities/workouts
+        Get recent activities/workouts. Paginates to fetch ALL activities
+        (Strava API returns max 200 per page; we were previously only getting 100).
         """
-        result = self._request(
-            "/athlete/activities",
-            {"before": int(datetime.now().timestamp()), "after": int((datetime.now() - timedelta(days=days)).timestamp()), "per_page": 100}
-        )
+        after_ts = int((datetime.now() - timedelta(days=days)).timestamp())
+        before_ts = int(datetime.now().timestamp())
+        all_results = []
+        page = 1
+        per_page = 200  # Strava max per page
         
-        if "error" in result:
-            return []
+        while True:
+            result = self._request(
+                "/athlete/activities",
+                {
+                    "before": before_ts,
+                    "after": after_ts,
+                    "per_page": per_page,
+                    "page": page,
+                },
+            )
+            if "error" in result:
+                break
+            if not isinstance(result, list) or len(result) == 0:
+                break
+            all_results.extend(result)
+            if len(result) < per_page:
+                break
+            page += 1
         
         activities = []
-        for activity in result:
+        for activity in all_results:
             # Extract time from start_date_local (e.g., "2026-02-15T15:25:30Z" -> "15:25")
             start_time = activity.get("start_date_local", "")
             time_str = start_time[11:16] if len(start_time) > 11 else ""

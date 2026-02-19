@@ -469,13 +469,18 @@ def pmc():
             '''
             result = query_api.query_data_frame(query)
             if not result.empty and 'suffer_score' in result.columns:
-                # Group by date and sum suffer_score (as proxy for training load)
+                # Group by date and sum suffer_score (Strava Relative Effort = TSS)
                 from collections import defaultdict
                 by_date = defaultdict(float)
                 for _, row in result.iterrows():
                     date = row.get('date', '')
-                    load = row.get('suffer_score', 0)
-                    if date and load:
+                    if not date and '_time' in row:
+                        try:
+                            date = pd.Timestamp(row['_time']).strftime('%Y-%m-%d')
+                        except Exception:
+                            pass
+                    load = row.get('suffer_score', 0) or 0
+                    if date:
                         by_date[date] += float(load)
                 daily_loads = [{"date": d, "load": l} for d, l in sorted(by_date.items())]
                 logger.info(f"Loaded {len(daily_loads)} days of training load from InfluxDB workouts")

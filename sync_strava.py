@@ -33,6 +33,7 @@ STRAVA_REFRESH_TOKEN = ""
 from strava_client import StravaClient
 from influxdb_client import InfluxDBClient, Point
 from datetime import datetime
+from training_load import calculate_training_load
 
 def sync_strava_to_influxdb():
     """Sync Strava activities to InfluxDB"""
@@ -115,6 +116,17 @@ def sync_strava_to_influxdb():
                     except (ValueError, TypeError):
                         return default
                 
+                # Use Strava suffer_score (Relative Effort); fallback to HR-based load when missing
+                ss = to_float(activity.get("suffer_score"))
+                if ss <= 0:
+                    dur = int(to_float(activity.get("duration"), 0))
+                    ss = calculate_training_load(
+                        duration_minutes=dur,
+                        avg_hr=activity.get("avg_hr"),
+                        max_hr=activity.get("max_hr"),
+                        suffer_score=None,
+                    ) if dur > 0 else 0.0
+                
                 point = Point("workouts")\
                     .tag("type", activity.get("type", "Unknown"))\
                     .tag("date", date)\
@@ -126,7 +138,7 @@ def sync_strava_to_influxdb():
                     .field("elevation_gain", to_float(activity.get("elevation_gain")))\
                     .field("avg_hr", to_float(activity.get("avg_hr")))\
                     .field("max_hr", to_float(activity.get("max_hr")))\
-                    .field("suffer_score", to_float(activity.get("suffer_score")))\
+                    .field("suffer_score", to_float(ss))\
                     .field("name", activity.get("name", ""))
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
