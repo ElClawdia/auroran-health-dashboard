@@ -131,8 +131,9 @@ def calculate_pmc_series(
     k_atl = 1 - math.exp(-1 / atl_days)
 
     if init_from_first_week and len(full_series) >= 1:
-        init_days = min(7, len(full_series))
-        init_avg = sum(d.get("load", 0.0) for d in full_series[:init_days]) / init_days
+        # Use last 42 days avg (CTL period) as init — reflects current training level
+        init_days = min(42, len(full_series))
+        init_avg = sum(d.get("load", 0.0) for d in full_series[-init_days:]) / init_days
         ctl = atl = init_avg
     else:
         ctl = atl = 0.0
