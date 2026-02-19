@@ -15,12 +15,12 @@ import math
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
-# PMC constants
-CTL_DAYS = 42  # Chronic Training Load period
-ATL_DAYS = 7   # Acute Training Load period
-# Exponential smoothing factor: α = 2/(N+1)
-CTL_ALPHA = 2 / (CTL_DAYS + 1)
-ATL_ALPHA = 2 / (ATL_DAYS + 1)
+# PMC constants (per ATL_CTL_TSB_ALGORITHMS.md)
+CTL_DAYS = 42  # Chronic Training Load period (τ)
+ATL_DAYS = 7   # Acute Training Load period (τ)
+# EWMA decay: k = 1 - exp(-1/τ) — Coggan/TrainingPeaks standard
+CTL_K = 1 - math.exp(-1 / CTL_DAYS)   # ≈ 0.02353
+ATL_K = 1 - math.exp(-1 / ATL_DAYS)   # ≈ 0.133
 
 
 def calculate_intensity_factor(avg_hr: Optional[float], max_hr: Optional[float], 
@@ -95,9 +95,54 @@ def calculate_training_load(duration_minutes: int, avg_hr: Optional[float] = Non
     return round(load, 1)
 
 
+def _build_full_series(daily_loads: List[Dict]) -> List[Dict]:
+    """
+    Build continuous daily series from min to max date, filling gaps with 0.
+    Per spec: days with no workout = TSS 0.
+    """
+    if not daily_loads:
+        return []
+    loads_map = {d["date"]: float(d.get("load", 0.0)) for d in daily_loads}
+    dates = sorted(loads_map.keys())
+    start = datetime.strptime(dates[0], "%Y-%m-%d").date()
+    end = datetime.strptime(dates[-1], "%Y-%m-%d").date()
+    full_series = []
+    cur = start
+    while cur <= end:
+        ds = cur.isoformat()
+        full_series.append({"date": ds, "load": loads_map.get(ds, 0.0)})
+        cur += timedelta(days=1)
+    return full_series
+
+
+def calculate_pmc_series(full_series: List[Dict], ctl_days: int = 42, atl_days: int = 7) -> List[Dict]:
+    """
+    Calculate CTL, ATL, TSB for each day using EWMA per ATL_CTL_TSB_ALGORITHMS.md.
+    full_series: consecutive days with no gaps (missing days = load 0).
+    """
+    k_ctl = 1 - math.exp(-1 / ctl_days)
+    k_atl = 1 - math.exp(-1 / atl_days)
+    ctl, atl = 0.0, 0.0
+    result = []
+    for day in full_series:
+        load = day.get("load", 0.0)
+        ctl = ctl * (1 - k_ctl) + load * k_ctl
+        atl = atl * (1 - k_atl) + load * k_atl
+        tsb = ctl - atl
+        result.append({
+            "date": day["date"],
+            "load": round(load, 1),
+            "ctl": round(ctl, 1),
+            "atl": round(atl, 1),
+            "tsb": round(tsb, 1),
+        })
+    return result
+
+
 def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
     """
-    Calculate CTL, ATL, and TSB from daily training loads
+    Calculate CTL, ATL, and TSB from daily training loads.
+    Aligns with ATL_CTL_TSB_ALGORITHMS.md: EWMA k=1-exp(-1/τ), init 0, fill gaps.
     
     daily_loads: List of {date: "YYYY-MM-DD", load: float}
     
@@ -106,34 +151,13 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
     if not daily_loads:
         return {"ctl": 0, "atl": 0, "tsb": 0, "status": "No data"}
     
-    # Sort by date
-    sorted_loads = sorted(daily_loads, key=lambda x: x.get("date", ""))
-    
-    # Initialize with first load
-    if sorted_loads:
-        first_load = sorted_loads[0].get("load", 0)
-        ctl = first_load
-        atl = first_load
-    else:
-        ctl = atl = 0
-    
-    # Impulse-response model (EMA) - matches Strava's actual method!
-    ATL_ALPHA = 2 / (7 + 1)  # 0.25 for 7-day
-    CTL_ALPHA = 2 / (42 + 1)  # ~0.047 for 42-day
-    
-    all_loads = [day.get("load", 0) for day in sorted_loads]
-    
-    if not all_loads:
+    full_series = _build_full_series(daily_loads)
+    if not full_series:
         return {"ctl": 0, "atl": 0, "tsb": 0, "status": "No data"}
     
-    # Calculate EMA
-    ctl = all_loads[0]
-    atl = all_loads[0]
-    for load in all_loads[1:]:
-        ctl = CTL_ALPHA * load + (1 - CTL_ALPHA) * ctl
-        atl = ATL_ALPHA * load + (1 - ATL_ALPHA) * atl
-    
-    tsb = ctl - atl
+    pmc_series = calculate_pmc_series(full_series)
+    latest = pmc_series[-1]
+    tsb = latest["tsb"]
     
     # Determine status
     if tsb > 10:
@@ -146,9 +170,9 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
         status = "Overreaching ⚠️"
     
     return {
-        "ctl": round(ctl, 1),
-        "atl": round(atl, 1),
-        "tsb": round(tsb, 1),
+        "ctl": latest["ctl"],
+        "atl": latest["atl"],
+        "tsb": latest["tsb"],
         "status": status
     }
 

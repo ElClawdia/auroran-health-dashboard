@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 from suunto_client import SuuntoClient
 from strava_client import StravaClient, MockStravaClient
 from planner import ExercisePlanner
-from training_load import calculate_training_load, calculate_ctl_atl_tsb, get_status_description
+from training_load import calculate_training_load, calculate_ctl_atl_tsb, calculate_pmc_series, get_status_description
 
 app = Flask(__name__)
 
@@ -501,23 +501,7 @@ def pmc():
         full_series.append({"date": ds, "load": loads_map.get(ds, 0.0)})
         cur += timedelta(days=1)
 
-    ctl_alpha = 2 / (42 + 1)
-    atl_alpha = 2 / (7 + 1)
-    ctl = full_series[0]["load"] if full_series else 0.0
-    atl = full_series[0]["load"] if full_series else 0.0
-    pmc_series = []
-    for day in full_series:
-        load = day["load"]
-        ctl = ctl_alpha * load + (1 - ctl_alpha) * ctl
-        atl = atl_alpha * load + (1 - atl_alpha) * atl
-        tsb = ctl - atl
-        pmc_series.append({
-            "date": day["date"],
-            "ctl": round(ctl, 1),
-            "atl": round(atl, 1),
-            "tsb": round(tsb, 1),
-            "load": round(load, 1),
-        })
+    pmc_series = calculate_pmc_series(full_series)
 
     pmc_recent = pmc_series[-days:]
     latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
