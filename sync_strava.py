@@ -65,7 +65,7 @@ def sync_strava_to_influxdb():
     try:
         # Get activities (last 180 days for accurate PMC calculation)
         # CTL needs ~42 days, 180 gives plenty of history
-        activities = strava.get_activities(180)
+        activities = strava.get_activities(365 * 3)  # ~3 years of history
         
         print(f"Syncing {len(activities)} activities to InfluxDB...")
         
