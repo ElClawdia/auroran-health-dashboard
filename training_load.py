@@ -115,14 +115,28 @@ def _build_full_series(daily_loads: List[Dict]) -> List[Dict]:
     return full_series
 
 
-def calculate_pmc_series(full_series: List[Dict], ctl_days: int = 42, atl_days: int = 7) -> List[Dict]:
+def calculate_pmc_series(
+    full_series: List[Dict],
+    ctl_days: int = 42,
+    atl_days: int = 7,
+    init_from_first_week: bool = True,
+) -> List[Dict]:
     """
     Calculate CTL, ATL, TSB for each day using EWMA per ATL_CTL_TSB_ALGORITHMS.md.
     full_series: consecutive days with no gaps (missing days = load 0).
+    init_from_first_week: if True, initialize CTL/ATL with first 7-day average
+        (Strava-like; avoids ramp-up from 0 and aligns with platforms that have prior history).
     """
     k_ctl = 1 - math.exp(-1 / ctl_days)
     k_atl = 1 - math.exp(-1 / atl_days)
-    ctl, atl = 0.0, 0.0
+
+    if init_from_first_week and len(full_series) >= 1:
+        init_days = min(7, len(full_series))
+        init_avg = sum(d.get("load", 0.0) for d in full_series[:init_days]) / init_days
+        ctl = atl = init_avg
+    else:
+        ctl = atl = 0.0
+
     result = []
     for day in full_series:
         load = day.get("load", 0.0)
@@ -142,7 +156,8 @@ def calculate_pmc_series(full_series: List[Dict], ctl_days: int = 42, atl_days: 
 def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
     """
     Calculate CTL, ATL, and TSB from daily training loads.
-    Aligns with ATL_CTL_TSB_ALGORITHMS.md: EWMA k=1-exp(-1/τ), init 0, fill gaps.
+    Aligns with ATL_CTL_TSB_ALGORITHMS.md: EWMA k=1-exp(-1/τ), fill gaps.
+    Uses first-week avg init (Strava-like) to avoid ramp-up from 0.
     
     daily_loads: List of {date: "YYYY-MM-DD", load: float}
     
