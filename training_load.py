@@ -88,7 +88,9 @@ def calculate_training_load(duration_minutes: int, avg_hr: Optional[float] = Non
     if avg_hr:
         hr_multiplier = 1 + (avg_hr - 100) / 100  # 0.5 at 50bpm, 1.0 at 100bpm, 1.5 at 150bpm
     else:
-        hr_multiplier = 1.0
+        # No HR data: assume moderate-hard effort (matches Strava's estimates better)
+        hr_multiplier = 1.3
+        intensity = 1.0
     
     load = duration_minutes * intensity * hr_multiplier
     
@@ -119,24 +121,24 @@ def calculate_pmc_series(
     full_series: List[Dict],
     ctl_days: int = 42,
     atl_days: int = 7,
-    init_from_first_week: bool = True,
 ) -> List[Dict]:
     """
     Calculate CTL, ATL, TSB for each day using EWMA per ATL_CTL_TSB_ALGORITHMS.md.
     full_series: consecutive days with no gaps (missing days = load 0).
-    init_from_first_week: if True, initialize CTL/ATL with first 7-day average
-        (Strava-like; avoids ramp-up from 0 and aligns with platforms that have prior history).
+    
+    Uses "seeded" initialization: start CTL/ATL at the series average to avoid
+    ramp-up artifacts and better match platforms with full history.
     """
+    if not full_series:
+        return []
+    
     k_ctl = 1 - math.exp(-1 / ctl_days)
     k_atl = 1 - math.exp(-1 / atl_days)
 
-    if init_from_first_week and len(full_series) >= 1:
-        # Use last 42 days avg (CTL period) as init — reflects current training level
-        init_days = min(42, len(full_series))
-        init_avg = sum(d.get("load", 0.0) for d in full_series[-init_days:]) / init_days
-        ctl = atl = init_avg
-    else:
-        ctl = atl = 0.0
+    # Seed with series average (approximates steady-state for consistent training)
+    total_load = sum(d.get("load", 0.0) for d in full_series)
+    avg_load = total_load / len(full_series) if full_series else 0.0
+    ctl = atl = avg_load
 
     result = []
     for day in full_series:
@@ -158,7 +160,7 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
     """
     Calculate CTL, ATL, and TSB from daily training loads.
     Aligns with ATL_CTL_TSB_ALGORITHMS.md: EWMA k=1-exp(-1/τ), fill gaps.
-    Uses first-week avg init (Strava-like) to avoid ramp-up from 0.
+    Uses series-average init to avoid ramp-up artifacts.
     
     daily_loads: List of {date: "YYYY-MM-DD", load: float}
     
