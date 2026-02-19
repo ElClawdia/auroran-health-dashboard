@@ -16,17 +16,17 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 # PMC constants - tuned to match Strava's PMC display
-# Empirically determined by comparing EWMA output against Strava's CTL/ATL values
-# using 365 days of actual workout data from InfluxDB
-CTL_DAYS = 42  # Chronic Training Load period (τ) - standard
-ATL_DAYS = 5   # Acute Training Load period (τ) - Strava uses shorter window than standard 7
+# Empirically calibrated against multiple reference points from Strava:
+#   02/09: CTL=51, ATL=65 | 01/29: CTL=50, ATL=85, TSB=-35 | Today: CTL=45, ATL=34
+CTL_DAYS = 38  # Chronic Training Load period (τ) - Strava uses ~38 vs standard 42
+ATL_DAYS = 5   # Acute Training Load period (τ) - Strava uses ~5 vs standard 7
 # EWMA decay: k = 1 - exp(-1/τ)
-CTL_K = 1 - math.exp(-1 / CTL_DAYS)   # ≈ 0.02353
+CTL_K = 1 - math.exp(-1 / CTL_DAYS)   # ≈ 0.026
 ATL_K = 1 - math.exp(-1 / ATL_DAYS)   # ≈ 0.181
 
 # Load scaling factor to align with Strava's PMC display
-# Strava's "Relative Effort" (suffer_score) needs ~1.24x scaling for PMC
-LOAD_SCALE_FACTOR = 1.24
+# Strava's "Relative Effort" (suffer_score) needs ~1.22x scaling for PMC
+LOAD_SCALE_FACTOR = 1.22
 
 
 def calculate_intensity_factor(avg_hr: Optional[float], max_hr: Optional[float], 
