@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import subprocess
 
 from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
+from datetime import datetime, timedelta, date
 
 # Get fresh Strava token (auto-refreshes if needed)
 try:
@@ -32,10 +33,11 @@ STRAVA_CLIENT_SECRET = ""
 STRAVA_REFRESH_TOKEN = ""
 from strava_client import StravaClient
 from influxdb_client import InfluxDBClient, Point
-from datetime import datetime
 from training_load import calculate_training_load
+import argparse
 
-def sync_strava_to_influxdb():
+
+def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
     """Sync Strava activities to InfluxDB"""
     
     # Check config
@@ -63,9 +65,29 @@ def sync_strava_to_influxdb():
     write_api = influxdb.write_api(write_options=SYNCHRONOUS)
     
     try:
-        # Get activities (last 180 days for accurate PMC calculation)
-        # CTL needs ~42 days, 180 gives plenty of history
-        activities = strava.get_activities(365 * 3)  # ~3 years of history
+        # Determine how far back to fetch
+        if force:
+            # Full historical sync
+            fetch_days = 365 * 3
+            print(f"Force sync: fetching ~3 years of history...")
+        elif newer_than:
+            # Fetch from specific date
+            try:
+                dt = datetime.strptime(newer_than, "%Y%m%d")
+                fetch_days = (datetime.now() - dt).days
+            except ValueError:
+                print(f"ERROR: Invalid date format for --newer-than: {newer_than}. Use YYYYMMDD")
+                return False
+            print(f"Fetching activities since {newer_than} ({fetch_days} days)...")
+        elif days:
+            fetch_days = days
+            print(f"Fetching last {fetch_days} days...")
+        else:
+            # Default: incremental - only last 30 days (quick cron run)
+            fetch_days = 30
+            print(f"Incremental sync: fetching last {fetch_days} days...")
+        
+        activities = strava.get_activities(fetch_days)
         
         print(f"Syncing {len(activities)} activities to InfluxDB...")
         
@@ -157,4 +179,23 @@ def sync_strava_to_influxdb():
     return True
 
 if __name__ == "__main__":
-    sync_strava_to_influxdb()
+    parser = argparse.ArgumentParser(description="Sync Strava workouts to InfluxDB")
+    parser.add_argument(
+        "--days", "-d", type=int, default=None,
+        help="Number of days to fetch (default: 30 for incremental sync)"
+    )
+    parser.add_argument(
+        "--force", "-f", action="store_true",
+        help="Force full sync: fetch ~3 years of history"
+    )
+    parser.add_argument(
+        "--newer-than", "-n", type=str, default=None,
+        help="Fetch activities newer than YYYYMMDD (e.g., 20240101)"
+    )
+    args = parser.parse_args()
+    
+    sync_strava_to_influxdb(
+        days=args.days,
+        force=args.force,
+        newer_than=args.newer_than,
+    )
