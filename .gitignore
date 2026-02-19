@@ -9,6 +9,8 @@ passwords.txt
 renew-strava-tokens/strava_tokens.json
 strava/strava_tokens.json
 *.json
+sirius_influxdb_secre_token.json
+local_influxdb_secret_token.json
 
 # Python
 __pycache__/
@@ -27,6 +29,7 @@ logs/health-dashboard.log'
 logs/strava_sync.log'
 *.log
 
+<<<<<<< HEAD
 # Data
 export.zip
 export.xml
@@ -35,7 +38,8 @@ export.xml
 tmp/*
 tmp
 
-# Data
-apple-health-data
-apple-health-data/
-apple-health-data/*
+#Data
+apple_health_export/
+apple_health_export/*
+apple_health_export
+backups/

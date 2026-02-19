@@ -48,6 +48,7 @@ app = Flask(__name__)
 from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
 from config import SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET
 from config import STRAVA_ACCESS_TOKEN, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN
+from config import FLASK_HOST, FLASK_PORT, FLASK_DEBUG
 
 # Initialize InfluxDB client with fallback
 influx_client = None
@@ -152,39 +153,66 @@ def health_today():
     try:
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -1d)
+          |> range(start: -30d)
           |> filter(fn: (r) => r._measurement == "daily_health")
+          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         result = query_api.query_data_frame(query)
-        
+        if isinstance(result, list):
+            if len(result) == 0:
+                return jsonify({"error": "No data from InfluxDB"}), 404
+            result = pd.concat(result, ignore_index=True)
+
         if result.empty:
-            # Return mock data for demo
-            return jsonify({
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "sleep_hours": 7.45,
-                "hrv": 42,
-                "resting_hr": 58,
-                "steps": 8500,
-                "recovery_score": 85,
-                "training_load": 1.2,
-                "trend": {
-                    "sleep": "+12m",
-                    "hrv": "+5ms ▲",
-                    "resting_hr": "-2bpm ▼"
-                }
-            })
-        
-        # Process actual data
-        latest = result.iloc[-1] if len(result) > 0 else {}
-        
+            return jsonify({"error": "No data from InfluxDB"}), 404
+
+        # Build one row per date and take the latest available date.
+        if "date" not in result.columns:
+            return jsonify({"error": "No date field in daily_health data"}), 404
+
+        df = result.copy()
+        numeric_cols = [
+            c for c in ["sleep_duration_hours", "hrv_avg", "resting_hr", "steps", "recovery_score", "training_load"]
+            if c in df.columns
+        ]
+        for c in numeric_cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        if numeric_cols:
+            df = df.groupby("date", as_index=False)[numeric_cols].mean()
+        else:
+            df = df[["date"]].drop_duplicates()
+
+        df = df.sort_values("date")
+        latest = df.iloc[-1]
+
+        def clean_number(val):
+            return None if pd.isna(val) else float(val)
+
+        def latest_non_null(col):
+            if col not in df.columns:
+                return None
+            series = df[col].dropna()
+            if series.empty:
+                return None
+            return series.iloc[-1]
+
+        sleep_val = latest_non_null("sleep_duration_hours")
+        hrv_val = latest_non_null("hrv_avg")
+        resting_hr_val = latest_non_null("resting_hr")
+        recovery_val = latest_non_null("recovery_score")
+        training_load_val = latest_non_null("training_load")
+        steps_val = latest_non_null("steps")
+        steps_clean = None if steps_val is None else int(float(steps_val))
+
         return jsonify({
             "date": latest.get("date", datetime.now().strftime("%Y-%m-%d")),
-            "sleep_hours": float(latest.get("sleep_duration_hours", 7.5)),
-            "hrv": float(latest.get("hrv_avg", 40)),
-            "resting_hr": float(latest.get("resting_hr", 60)),
-            "steps": int(latest.get("steps", 0)),
-            "recovery_score": int(latest.get("recovery_score", 70)),
-            "training_load": float(latest.get("training_load", 1.0))
+            "sleep_hours": clean_number(sleep_val),
+            "hrv": clean_number(hrv_val),
+            "resting_hr": clean_number(resting_hr_val),
+            "steps": steps_clean,
+            "recovery_score": clean_number(recovery_val),
+            "training_load": clean_number(training_load_val)
         })
     except Exception as e:
         logger.error(f"Error fetching today's health: {e}")
@@ -210,6 +238,11 @@ def health_history():
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         result = query_api.query_data_frame(query)
+
+        if isinstance(result, list):
+            if len(result) == 0:
+                return jsonify({"error": "No data from InfluxDB"}), 404
+            result = pd.concat(result, ignore_index=True)
         
         if result.empty or len(result) == 0:
             # Return mock trend data
@@ -222,15 +255,35 @@ def health_history():
                 "recovery": [60 + i + (i % 10) for i in range(days)]
             })
         
-        # Process actual data
-        df = result.sort_values('date')
-        
+        # Process actual data.
+        # Ensure exactly one row per date and a strict trailing window (e.g. 30 days).
+        df = result.copy()
+        if "date" not in df.columns:
+            return jsonify({"error": "No date field in daily_health data"}), 404
+
+        numeric_cols = [
+            c for c in ["hrv_avg", "resting_hr", "sleep_duration_hours", "recovery_score", "steps"]
+            if c in df.columns
+        ]
+        if numeric_cols:
+            for c in numeric_cols:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+            df = df.groupby("date", as_index=False)[numeric_cols].mean()
+        else:
+            df = df[["date"]].drop_duplicates()
+
+        df = df.sort_values("date").tail(days)
+
+        def clean_series(series, digits=2):
+            return [None if pd.isna(v) else round(float(v), digits) for v in series.tolist()]
+
         return jsonify({
             "dates": df["date"].tolist(),
-            "hrv": df["hrv_avg"].tolist() if "hrv_avg" in df else [],
-            "resting_hr": df["resting_hr"].tolist() if "resting_hr" in df else [],
-            "sleep": df["sleep_duration_hours"].tolist() if "sleep_duration_hours" in df else [],
-            "recovery": df["recovery_score"].tolist() if "recovery_score" in df else []
+            "hrv": clean_series(df["hrv_avg"], 2) if "hrv_avg" in df else [],
+            "resting_hr": clean_series(df["resting_hr"], 2) if "resting_hr" in df else [],
+            "sleep": clean_series(df["sleep_duration_hours"], 2) if "sleep_duration_hours" in df else [],
+            "recovery": clean_series(df["recovery_score"], 1) if "recovery_score" in df else [],
+            "steps": clean_series(df["steps"], 0) if "steps" in df else []
         })
     except Exception as e:
         logger.error(f"Error fetching health history: {e}")
@@ -399,7 +452,7 @@ def pmc():
     week_start = today - timedelta(days=today.weekday())
     week_start_str = week_start.strftime("%Y-%m-%d")
     
-    query_days = max(days, 42)  # Always at least 42 for CTL
+    query_days = max(days + 42, 90)  # Warm-up window so 30-day chart is stable.
     
     # Read training load from InfluxDB workouts only (never from Strava)
     daily_loads = []
@@ -433,20 +486,56 @@ def pmc():
     if not daily_loads:
         return jsonify({"error": "No training load data from InfluxDB"}), 404
     
-    # Calculate PMC metrics
-    pmc = calculate_ctl_atl_tsb(daily_loads)
-    
-    # Get recent loads for chart
-    recent_loads = daily_loads[-14:] if len(daily_loads) > 14 else daily_loads
+    # Build continuous daily load series (fill missing days with zero load),
+    # then compute CTL/ATL/TSB series for charting.
+    from datetime import datetime, timedelta
+
+    loads_map = {d["date"]: float(d.get("load", 0.0)) for d in daily_loads}
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=query_days - 1)
+
+    full_series = []
+    cur = start_date
+    while cur <= end_date:
+        ds = cur.isoformat()
+        full_series.append({"date": ds, "load": loads_map.get(ds, 0.0)})
+        cur += timedelta(days=1)
+
+    ctl_alpha = 2 / (42 + 1)
+    atl_alpha = 2 / (7 + 1)
+    ctl = full_series[0]["load"] if full_series else 0.0
+    atl = full_series[0]["load"] if full_series else 0.0
+    pmc_series = []
+    for day in full_series:
+        load = day["load"]
+        ctl = ctl_alpha * load + (1 - ctl_alpha) * ctl
+        atl = atl_alpha * load + (1 - atl_alpha) * atl
+        tsb = ctl - atl
+        pmc_series.append({
+            "date": day["date"],
+            "ctl": round(ctl, 1),
+            "atl": round(atl, 1),
+            "tsb": round(tsb, 1),
+            "load": round(load, 1),
+        })
+
+    pmc_recent = pmc_series[-days:]
+    latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
+    status = get_status_description(latest["tsb"])
     
     return jsonify({
-        "ctl": pmc["ctl"],
-        "atl": pmc["atl"],
-        "tsb": pmc["tsb"],
-        "status": pmc["status"],
-        "description": get_status_description(pmc["tsb"]),
-        "recent_loads": recent_loads,
-        "days_tracked": len(daily_loads)
+        "ctl": latest["ctl"],
+        "atl": latest["atl"],
+        "tsb": latest["tsb"],
+        "status": status,
+        "description": status,
+        "days_tracked": len(full_series),
+        "chart": {
+            "dates": [d["date"] for d in pmc_recent],
+            "ctl": [d["ctl"] for d in pmc_recent],
+            "atl": [d["atl"] for d in pmc_recent],
+            "tsb": [d["tsb"] for d in pmc_recent],
+        }
     })
 
 
@@ -479,6 +568,5 @@ def trends():
 
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    logger.info(f"Starting Health Dashboard on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    logger.info(f"Starting Health Dashboard on port {FLASK_PORT}")
+    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
