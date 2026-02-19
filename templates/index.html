@@ -131,6 +131,11 @@
             height: 300px;
         }
         
+        .chart-container-pmc {
+            position: relative;
+            height: 350px;
+        }
+        
         .recommendation-card {
             background: linear-gradient(135deg, var(--card-bg) 0%, #1a2332 100%);
             border: 1px solid var(--primary);
@@ -369,7 +374,7 @@
         <!-- PMC 30-day Chart -->
         <div class="chart-card">
             <div class="chart-title">📊 PMC - Performance Management (30-Day)</div>
-            <div class="chart-container">
+            <div class="chart-container-pmc">
                 <canvas id="pmcChart"></canvas>
             </div>
         </div>
@@ -737,6 +742,25 @@
             const atl = (chart.atl || []).slice(-30);
             const tsb = (chart.tsb || []).slice(-30);
 
+            // Calculate appropriate Y-axis range based on data
+            const allCtlAtl = [...ctl, ...atl].filter(v => v != null);
+            const allTsb = tsb.filter(v => v != null);
+            
+            // For CTL/ATL: add padding to make 10-point changes visible
+            const ctlAtlMin = Math.min(...allCtlAtl);
+            const ctlAtlMax = Math.max(...allCtlAtl);
+            const ctlAtlRange = ctlAtlMax - ctlAtlMin;
+            const ctlAtlPadding = Math.max(10, ctlAtlRange * 0.15);
+            const yMin = Math.max(0, Math.floor((ctlAtlMin - ctlAtlPadding) / 10) * 10);
+            const yMax = Math.ceil((ctlAtlMax + ctlAtlPadding) / 10) * 10;
+            
+            // For TSB: separate scale since it can go negative
+            const tsbMin = Math.min(...allTsb);
+            const tsbMax = Math.max(...allTsb);
+            const tsbPadding = Math.max(5, (tsbMax - tsbMin) * 0.15);
+            const y2Min = Math.floor((tsbMin - tsbPadding) / 10) * 10;
+            const y2Max = Math.ceil((tsbMax + tsbPadding) / 10) * 10;
+
             pmcChart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -747,24 +771,30 @@
                             data: ctl,
                             borderColor: '#58a6ff',
                             backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                            borderWidth: 2,
                             tension: 0.35,
-                            fill: false
+                            fill: false,
+                            yAxisID: 'y'
                         },
                         {
                             label: 'ATL (Strain)',
                             data: atl,
                             borderColor: '#d29922',
                             backgroundColor: 'rgba(210, 153, 34, 0.1)',
+                            borderWidth: 2,
                             tension: 0.35,
-                            fill: false
+                            fill: false,
+                            yAxisID: 'y'
                         },
                         {
                             label: 'TSB (Form)',
                             data: tsb,
                             borderColor: '#3fb950',
                             backgroundColor: 'rgba(63, 185, 80, 0.1)',
+                            borderWidth: 2,
                             tension: 0.35,
-                            fill: false
+                            fill: false,
+                            yAxisID: 'y2'
                         }
                     ]
                 },
@@ -778,6 +808,13 @@
                     plugins: {
                         legend: {
                             labels: { color: '#c9d1d9' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': ' + context.parsed.y.toFixed(1);
+                                }
+                            }
                         }
                     },
                     scales: {
@@ -786,9 +823,28 @@
                             grid: { color: '#30363d' }
                         },
                         y: {
-                            ticks: { color: '#c9d1d9' },
+                            type: 'linear',
+                            position: 'left',
+                            min: yMin,
+                            max: yMax,
+                            ticks: { 
+                                color: '#c9d1d9',
+                                stepSize: 10
+                            },
                             grid: { color: '#30363d' },
-                            title: { display: true, text: 'Training Load', color: '#8b949e' }
+                            title: { display: true, text: 'CTL / ATL', color: '#8b949e' }
+                        },
+                        y2: {
+                            type: 'linear',
+                            position: 'right',
+                            min: y2Min,
+                            max: y2Max,
+                            ticks: { 
+                                color: '#3fb950',
+                                stepSize: 10
+                            },
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: 'TSB (Form)', color: '#3fb950' }
                         }
                     }
                 }
