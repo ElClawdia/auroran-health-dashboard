@@ -149,6 +149,7 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                         suffer_score=None,
                     ) if dur > 0 else 0.0
                 
+                # Write to both measurements: workouts (legacy) and workout_cache (optimized)
                 point = Point("workouts")\
                     .tag("type", activity.get("type", "Unknown"))\
                     .tag("date", date)\
@@ -164,6 +165,22 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                     .field("name", activity.get("name", ""))
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+                
+                # Also write to workout_cache (optimized for faster queries)
+                cache_point = Point("workout_cache")\
+                    .tag("type", activity.get("type", "Unknown"))\
+                    .tag("date", date)\
+                    .field("strava_id", strava_id)\
+                    .field("start_time", time)\
+                    .field("duration", to_float(activity.get("duration")))\
+                    .field("distance", to_float(activity.get("distance")))\
+                    .field("elevation_gain", to_float(activity.get("elevation_gain")))\
+                    .field("avg_hr", to_float(activity.get("avg_hr")))\
+                    .field("max_hr", to_float(activity.get("max_hr")))\
+                    .field("suffer_score", to_float(ss))\
+                    .field("name", activity.get("name", ""))
+                
+                write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=cache_point)
                 existing_ids.add(strava_id)  # Add to avoid duplicates in same run
                 synced += 1
             except Exception as e:

@@ -86,10 +86,10 @@ strava = StravaClient(
 ) if STRAVA_ACCESS_TOKEN else MockStravaClient()
 planner = ExercisePlanner()
 
-# Simple in-memory cache for workouts (refreshed every 5 minutes)
+# Simple in-memory cache for workouts and PMC data
 _workout_cache = {"data": None, "expires": None}
 _pmc_cache = {"data": None, "expires": None}
-CACHE_TTL_SECONDS = 300  # 5 minutes
+CACHE_TTL_SECONDS = 60  # 1 minute - balance between freshness and performance
 
 # Generate mock data for demo mode
 def get_mock_health_today():
@@ -301,25 +301,30 @@ def _fetch_workouts_from_influx():
     
     cutoff = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
     
-    # Query without pivot - much faster
-    query = f'''
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -365d)
-      |> filter(fn: (r) => r._measurement == "workouts")
-      |> filter(fn: (r) => r.date >= "{cutoff}")
-    '''
-    
-    tables = query_api.query_stream(query)
-    
-    # Manual pivot in Python using _time as unique key
-    workouts = defaultdict(dict)
-    for record in tables:
-        key = str(record.get_time())
-        field = record.get_field()
-        value = record.get_value()
-        workouts[key][field] = value
-        workouts[key]['date'] = record.values.get('date', '')
-        workouts[key]['type'] = record.values.get('type', '')
+    # Try workout_cache first (optimized, fewer records)
+    # Fall back to workouts measurement if cache doesn't exist
+    for measurement in ["workout_cache", "workouts"]:
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: -365d)
+          |> filter(fn: (r) => r._measurement == "{measurement}")
+          |> filter(fn: (r) => r.date >= "{cutoff}")
+        '''
+        
+        tables = query_api.query_stream(query)
+        
+        # Manual pivot in Python using _time as unique key
+        workouts = defaultdict(dict)
+        for record in tables:
+            key = str(record.get_time())
+            field = record.get_field()
+            value = record.get_value()
+            workouts[key][field] = value
+            workouts[key]['date'] = record.values.get('date', '')
+            workouts[key]['type'] = record.values.get('type', '')
+        
+        if workouts:
+            break
     
     # Sort by date and start_time descending
     result = sorted(
