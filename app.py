@@ -452,7 +452,7 @@ def pmc():
     week_start = today - timedelta(days=today.weekday())
     week_start_str = week_start.strftime("%Y-%m-%d")
     
-    query_days = max(days + 42, 90)  # Warm-up window so 30-day chart is stable.
+    query_days = max(days + 42, 365)  # Full year for stable CTL/ATL
     
     # Read training load from InfluxDB workouts only (never from Strava)
     daily_loads = []
