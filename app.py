@@ -321,9 +321,9 @@ def workouts():
             elif hasattr(result, 'empty') and result.empty:
                 return jsonify({"error": "No workouts from InfluxDB"}), 404
             
-            # Sort by date descending (newest first)
+            # Sort by date descending (newest first), then by start_time descending
             records = result.to_dict(orient='records')
-            records.sort(key=lambda x: str(x.get('date', '')), reverse=True)
+            records.sort(key=lambda x: (str(x.get('date', '')), str(x.get('start_time', ''))), reverse=True)
             return jsonify(records)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
