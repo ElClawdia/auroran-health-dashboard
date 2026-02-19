@@ -86,6 +86,11 @@ strava = StravaClient(
 ) if STRAVA_ACCESS_TOKEN else MockStravaClient()
 planner = ExercisePlanner()
 
+# Simple in-memory cache for workouts (refreshed every 5 minutes)
+_workout_cache = {"data": None, "expires": None}
+_pmc_cache = {"data": None, "expires": None}
+CACHE_TTL_SECONDS = 300  # 5 minutes
+
 # Generate mock data for demo mode
 def get_mock_health_today():
     """Return realistic mock data for demo"""
@@ -290,42 +295,69 @@ def health_history():
         return jsonify({"error": str(e)}), 500
 
 
+def _fetch_workouts_from_influx():
+    """Fetch workouts from InfluxDB with manual pivot (faster than Flux pivot)"""
+    from collections import defaultdict
+    
+    cutoff = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+    
+    # Query without pivot - much faster
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -365d)
+      |> filter(fn: (r) => r._measurement == "workouts")
+      |> filter(fn: (r) => r.date >= "{cutoff}")
+    '''
+    
+    tables = query_api.query_stream(query)
+    
+    # Manual pivot in Python using _time as unique key
+    workouts = defaultdict(dict)
+    for record in tables:
+        key = str(record.get_time())
+        field = record.get_field()
+        value = record.get_value()
+        workouts[key][field] = value
+        workouts[key]['date'] = record.values.get('date', '')
+        workouts[key]['type'] = record.values.get('type', '')
+    
+    # Sort by date and start_time descending
+    result = sorted(
+        workouts.values(), 
+        key=lambda x: (x.get('date', ''), x.get('start_time', '')), 
+        reverse=True
+    )
+    return result
+
+
 @app.route('/api/workouts', methods=['GET', 'POST'])
 def workouts():
     """Get or log workouts"""
-    logger.info("Fetching workouts")
     if request.method == 'GET':
         if not query_api:
-            # Return mock data for demo
             logger.info("Using mock workouts (no InfluxDB)")
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
-            # Get last 365 days of workouts from InfluxDB
-            query = f'''
-            from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -365d)
-              |> filter(fn: (r) => r._measurement == "workouts")
-              |> filter(fn: (r) => r._field != "date")
-              |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-            '''
-            # Always read from InfluxDB only (Strava → InfluxDB → Dashboard)
-            result = query_api.query_data_frame(query)
+            # Check cache first
+            now = datetime.now()
+            if _workout_cache["data"] and _workout_cache["expires"] and now < _workout_cache["expires"]:
+                logger.info("Returning cached workouts")
+                return jsonify(_workout_cache["data"])
             
-            # Handle both list and DataFrame returns
-            if isinstance(result, list):
-                if len(result) == 0:
-                    return jsonify({"error": "No workouts from InfluxDB"}), 404
-                import pandas as pd
-                result = pd.concat(result, ignore_index=True) if all(hasattr(r, 'empty') for r in result) else result
-            elif hasattr(result, 'empty') and result.empty:
+            logger.info("Fetching workouts from InfluxDB")
+            records = _fetch_workouts_from_influx()
+            
+            if not records:
                 return jsonify({"error": "No workouts from InfluxDB"}), 404
             
-            # Sort by date descending (newest first), then by start_time descending
-            records = result.to_dict(orient='records')
-            records.sort(key=lambda x: (str(x.get('date', '')), str(x.get('start_time', ''))), reverse=True)
+            # Update cache
+            _workout_cache["data"] = records
+            _workout_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
+            
             return jsonify(records)
         except Exception as e:
+            logger.error(f"Error fetching workouts: {e}")
             return jsonify({"error": str(e)}), 500
     
     # POST - Log new workout
@@ -435,55 +467,66 @@ def strava_sync():
         return jsonify({"error": str(e)}), 500
 
 
+def _fetch_daily_loads_from_influx(query_days=365):
+    """Fetch daily training loads from InfluxDB (optimized, no pivot)"""
+    from collections import defaultdict
+    
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -{query_days}d)
+      |> filter(fn: (r) => r._measurement == "workouts")
+      |> filter(fn: (r) => r._field == "suffer_score")
+    '''
+    
+    tables = query_api.query_stream(query)
+    by_date = defaultdict(float)
+    
+    for record in tables:
+        date = record.values.get('date', '')
+        load = record.get_value() or 0
+        if date:
+            by_date[date] += float(load)
+    
+    return [{"date": d, "load": l} for d, l in sorted(by_date.items())]
+
+
 @app.route('/api/pmc')
 def pmc():
     """
     Get Performance Management Chart data (CTL, ATL, TSB)
     This calculates fitness, strain, and form from training load
     """
-    logger.info("Fetching PMC data")
-    # Always query enough days to get full range
     days = request.args.get('days', 90, type=int)
-    
-    # For weekly view (ATL), use current week (Mon-Sun)
-    from datetime import datetime, timedelta
-    today = datetime.now()
-    # Find start of current week (Monday)
-    week_start = today - timedelta(days=today.weekday())
-    week_start_str = week_start.strftime("%Y-%m-%d")
-    
     query_days = max(days + 42, 365)  # Full year for stable CTL/ATL
     
-    # Read training load from InfluxDB workouts only (never from Strava)
+    # Check cache first
+    now = datetime.now()
+    if _pmc_cache["data"] and _pmc_cache["expires"] and now < _pmc_cache["expires"]:
+        logger.info("Returning cached PMC data")
+        cached = _pmc_cache["data"]
+        # Return cached data but slice to requested days
+        pmc_recent = cached["pmc_series"][-days:]
+        latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
+        return jsonify({
+            "ctl": latest["ctl"],
+            "atl": latest["atl"],
+            "tsb": latest["tsb"],
+            "status": get_status_description(latest["tsb"]),
+            "chart": {
+                "dates": [d["date"] for d in pmc_recent],
+                "ctl": [d["ctl"] for d in pmc_recent],
+                "atl": [d["atl"] for d in pmc_recent],
+                "tsb": [d["tsb"] for d in pmc_recent],
+            }
+        })
+    
+    logger.info("Fetching PMC data from InfluxDB")
     daily_loads = []
     
     if query_api:
         try:
-            # Get suffer_score from workouts to calculate training load
-            query = f'''
-            from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -{query_days}d)
-              |> filter(fn: (r) => r._measurement == "workouts")
-              |> filter(fn: (r) => r._field == "suffer_score")
-              |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-            '''
-            result = query_api.query_data_frame(query)
-            if not result.empty and 'suffer_score' in result.columns:
-                # Group by date and sum suffer_score (Strava Relative Effort = TSS)
-                from collections import defaultdict
-                by_date = defaultdict(float)
-                for _, row in result.iterrows():
-                    date = row.get('date', '')
-                    if not date and '_time' in row:
-                        try:
-                            date = pd.Timestamp(row['_time']).strftime('%Y-%m-%d')
-                        except Exception:
-                            pass
-                    load = row.get('suffer_score', 0) or 0
-                    if date:
-                        by_date[date] += float(load)
-                daily_loads = [{"date": d, "load": l} for d, l in sorted(by_date.items())]
-                logger.info(f"Loaded {len(daily_loads)} days of training load from InfluxDB workouts")
+            daily_loads = _fetch_daily_loads_from_influx(query_days)
+            logger.info(f"Loaded {len(daily_loads)} days of training load from InfluxDB")
         except Exception as e:
             logger.error(f"Error fetching PMC data from InfluxDB: {e}")
     
@@ -493,8 +536,6 @@ def pmc():
     
     # Build continuous daily load series (fill missing days with zero load),
     # then compute CTL/ATL/TSB series for charting.
-    from datetime import datetime, timedelta
-
     loads_map = {d["date"]: float(d.get("load", 0.0)) for d in daily_loads}
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=query_days - 1)
@@ -507,6 +548,10 @@ def pmc():
         cur += timedelta(days=1)
 
     pmc_series = calculate_pmc_series(full_series)
+    
+    # Update cache
+    _pmc_cache["data"] = {"pmc_series": pmc_series}
+    _pmc_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
 
     pmc_recent = pmc_series[-days:]
     latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
