@@ -42,17 +42,19 @@ from suunto_client import SuuntoClient
 from strava_client import StravaClient, MockStravaClient
 from planner import ExercisePlanner
 from training_load import calculate_training_load, calculate_ctl_atl_tsb, calculate_pmc_series, get_status_description, reload_params
-from auth import login_required, authenticate, get_current_user, update_user, get_user
+from auth import login_required, authenticate, get_current_user, update_user, get_user, hash_password
 from formula_learning import load_params, run_learning_cycle
+from email_service import generate_reset_token, consume_reset_token, send_password_reset_email
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 
 # Configuration
 from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
 from config import SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET
 from config import STRAVA_ACCESS_TOKEN, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN
-from config import FLASK_HOST, FLASK_PORT, FLASK_DEBUG
+from config import FLASK_HOST, FLASK_PORT, FLASK_DEBUG, FLASK_SECRET_KEY
+
+app.secret_key = FLASK_SECRET_KEY or secrets.token_hex(32)
 
 # Initialize InfluxDB client with fallback
 influx_client = None
@@ -205,13 +207,6 @@ def account_page():
             updates['full_name'] = data['full_name']
         if data.get('email'):
             updates['email'] = data['email']
-        if data.get('new_password') and data.get('current_password'):
-            # Verify current password first
-            if not authenticate(session['user'], data['current_password']):
-                if request.is_json:
-                    return jsonify({"error": "Current password is incorrect"}), 400
-                return render_template('account.html', user=user, error="Current password is incorrect")
-            updates['new_password'] = data['new_password']
         
         if updates:
             update_user(session['user'], updates)
@@ -224,6 +219,84 @@ def account_page():
         return render_template('account.html', user=user, success="Account updated successfully")
     
     return render_template('account.html', user=user)
+
+
+@app.route('/account/change-password', methods=['POST'])
+@login_required
+def request_password_change():
+    """Request password change - sends verification email"""
+    user = get_current_user()
+    data = request.get_json() if request.is_json else request.form
+    
+    current_password = data.get('current_password')
+    new_password = data.get('new_password')
+    
+    if not current_password or not new_password:
+        return jsonify({"error": "Current and new password required"}), 400
+    
+    # Verify current password
+    if not authenticate(session['user'], current_password):
+        return jsonify({"error": "Current password is incorrect"}), 400
+    
+    if len(new_password) < 8:
+        return jsonify({"error": "New password must be at least 8 characters"}), 400
+    
+    # Hash the new password
+    password_hash, salt = hash_password(new_password)
+    
+    # Generate reset token
+    token = generate_reset_token(session['user'], password_hash, salt)
+    
+    # Build verification link
+    reset_link = url_for('verify_password_change', token=token, _external=True)
+    
+    # Send email
+    email_sent = send_password_reset_email(
+        to_email=user['email'],
+        username=user['full_name'],
+        reset_link=reset_link
+    )
+    
+    if email_sent:
+        return jsonify({
+            "success": True,
+            "message": f"Verification email sent to {user['email']}. Please check your inbox."
+        })
+    else:
+        return jsonify({
+            "success": True,
+            "message": "Email service not configured. For testing, use this link:",
+            "verification_link": reset_link
+        })
+
+
+@app.route('/verify-password/<token>')
+def verify_password_change(token):
+    """Verify password change from email link"""
+    token_data = consume_reset_token(token)
+    
+    if not token_data:
+        return render_template('password_verified.html', 
+                             success=False, 
+                             message="Invalid or expired verification link.")
+    
+    # Update the user's password
+    from auth import load_users, save_users
+    users = load_users()
+    username = token_data['username']
+    
+    if username in users:
+        users[username]['password_hash'] = token_data['password_hash']
+        users[username]['salt'] = token_data['salt']
+        save_users(users)
+        
+        return render_template('password_verified.html',
+                             success=True,
+                             message="Your password has been changed successfully. You can now log in with your new password.")
+    
+    return render_template('password_verified.html',
+                         success=False,
+                         message="User not found.")
 
 
 @app.route('/api/user')
@@ -598,11 +671,13 @@ def recommendations_today():
 @app.route('/api/calories')
 @login_required
 def calories():
-    """Get calories burned from workouts for today"""
-    date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+    """Get calories burned from workouts for yesterday (default) or specified date"""
+    # Default to yesterday since today's workouts may not be complete
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    date = request.args.get('date', yesterday)
     
     if not query_api:
-        return jsonify({"calories": 0})
+        return jsonify({"calories": 0, "date": date})
     
     try:
         # Query calories from workouts for the specified date
@@ -626,7 +701,7 @@ def calories():
         return jsonify({"calories": int(total_calories), "date": date})
     except Exception as e:
         logger.error(f"Error fetching calories: {e}")
-        return jsonify({"calories": 0, "error": str(e)})
+        return jsonify({"calories": 0, "date": date, "error": str(e)})
 
 
 @app.route('/api/weight', methods=['GET', 'POST'])

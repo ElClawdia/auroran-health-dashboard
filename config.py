@@ -55,6 +55,14 @@ GARMIN_PASSWORD = get_secret('garmin_password', '')
 FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
 FLASK_PORT = int(os.getenv('PORT', get_secret('port', 5000)))
 FLASK_DEBUG = os.getenv('FLASK_DEBUG', str(get_secret('flask_debug', False))).lower() == 'true'
+FLASK_SECRET_KEY = get_secret('flask_secret_key', '')
+
+# SMTP Configuration for email
+SMTP_HOST = os.getenv('SMTP_HOST', get_secret('smtp_host', 'smtp.auroranrunner.com'))
+SMTP_PORT = int(os.getenv('SMTP_PORT', get_secret('smtp_port', 587)))
+SMTP_USER = os.getenv('SMTP_USER', get_secret('smtp_user', 'health@auroranrunner.com'))
+SMTP_PASSWORD = get_secret('smtp_password', '')
+SMTP_FROM_EMAIL = os.getenv('SMTP_FROM_EMAIL', get_secret('smtp_from_email', 'health@auroranrunner.com'))
 
 # Demo Mode (if no InfluxDB configured)
 DEMO_MODE = not INFLUXDB_TOKEN

@@ -202,6 +202,9 @@
         
         <div class="card">
             <h2>Change Password</h2>
+            <p style="color: var(--text-dim); margin-bottom: 20px; font-size: 14px;">
+                A verification email will be sent to {{ user.email }} to confirm the password change.
+            </p>
             <form id="password-form">
                 <div class="form-group">
                     <label for="current_password">Current Password</label>
@@ -219,9 +222,10 @@
                 </div>
                 
                 <div class="form-actions">
-                    <button type="submit" class="btn">Change Password</button>
+                    <button type="submit" class="btn" id="password-btn">Send Verification Email</button>
                 </div>
             </form>
+            <div id="password-message" style="margin-top: 15px; display: none;"></div>
         </div>
     </div>
     
@@ -263,26 +267,48 @@
                 return;
             }
             
+            const btn = document.getElementById('password-btn');
+            const msgDiv = document.getElementById('password-message');
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            
             const data = {
                 current_password: document.getElementById('current_password').value,
                 new_password: newPassword
             };
             
             try {
-                const response = await fetch('/account', {
+                const response = await fetch('/account/change-password', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(data)
                 });
                 
                 const result = await response.json();
+                
                 if (result.success) {
-                    alert('Password changed successfully');
+                    msgDiv.style.display = 'block';
+                    msgDiv.style.background = 'rgba(63, 185, 80, 0.1)';
+                    msgDiv.style.border = '1px solid var(--success)';
+                    msgDiv.style.color = 'var(--success)';
+                    msgDiv.style.padding = '12px';
+                    msgDiv.style.borderRadius = '8px';
+                    msgDiv.innerHTML = result.message;
+                    
+                    if (result.verification_link) {
+                        msgDiv.innerHTML += '<br><br><a href="' + result.verification_link + '" style="color: var(--primary);">Click here to verify (testing mode)</a>';
+                    }
+                    
                     document.getElementById('password-form').reset();
+                    btn.textContent = 'Email Sent!';
                 } else {
+                    btn.disabled = false;
+                    btn.textContent = 'Send Verification Email';
                     alert(result.error || 'Password change failed');
                 }
             } catch (error) {
+                btn.disabled = false;
+                btn.textContent = 'Send Verification Email';
                 alert('Password change failed: ' + error.message);
             }
         });

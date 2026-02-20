@@ -480,7 +480,7 @@
                 <div class="card-trend" id="weight-trend"></div>
             </div>
             <div class="card">
-                <div class="card-label">🔥 Calories Burned</div>
+                <div class="card-label">🔥 Calories Burned (Yesterday)</div>
                 <div class="card-value" id="calories-value">--</div>
                 <div class="card-trend" id="calories-trend" style="color: var(--text-dim);">From workouts</div>
             </div>
@@ -665,10 +665,14 @@
         
         function updateCalories(data) {
             const el = document.getElementById('calories-value');
+            const trendEl = document.getElementById('calories-trend');
             if (el && data.calories) {
                 el.textContent = data.calories.toLocaleString() + ' kcal';
             } else if (el) {
                 el.textContent = '--';
+            }
+            if (trendEl && data.date) {
+                trendEl.textContent = data.date + ' workouts';
             }
         }
         
@@ -1104,6 +1108,7 @@
                 const elevation = w.elevation_gain ? Math.round(w.elevation_gain) + 'm' : '';
                 const effort = w.suffer_score ? Math.round(w.suffer_score) : '';
                 const hr = w.avg_hr ? Math.round(w.avg_hr) : '';
+                const cal = w.calories ? Math.round(w.calories) : '';
                 const time = w.time ? w.time : (w.start_time ? w.start_time : '');
                 const name = w.name ? w.name : w.type;
                 
@@ -1111,6 +1116,7 @@
                 const elev = elevation ? '↑' + elevation : '';
                 const eff = effort ? '⚡' + effort : '';
                 const heart = hr ? hr + ' bpm' : '';
+                const calories = cal ? cal + ' kcal' : '';
                 
                 // Mobile-friendly card layout
                 const stravaUrl = w.strava_id ? `https://www.strava.com/activities/${w.strava_id}` : '';
@@ -1126,11 +1132,12 @@
                             </div>
                             ${distance ? `<span style="color: var(--accent); font-weight: 600;">${distance}</span>` : ''}
                         </div>
-                        <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-dim);">
+                        <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-dim); flex-wrap: wrap; gap: 4px;">
                             <span>${dur}</span>
                             <span>${elev}</span>
                             <span style="color: #f59e0b; font-weight: 600;">${eff}</span>
                             <span>${heart}</span>
+                            ${calories ? `<span style="color: #ef4444;">🔥${calories}</span>` : ''}
                         </div>
                     </div>
                 `;
