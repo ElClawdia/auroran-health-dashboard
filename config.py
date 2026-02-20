@@ -77,6 +77,7 @@ SMTP_PORT = int(get_smtp_config('smtp_port', 587))
 SMTP_USER = get_smtp_config('smtp_user', 'health@auroranrunner.com')
 SMTP_PASSWORD = get_smtp_config('smtp_password', '')
 SMTP_FROM_EMAIL = get_smtp_config('smtp_from_email', 'health@auroranrunner.com')
+SMTP_FROM_NAME = get_smtp_config('smtp_from_name', 'Auroran Health Dashboard')
 
 # Demo Mode (if no InfluxDB configured)
 DEMO_MODE = not INFLUXDB_TOKEN

@@ -13,11 +13,11 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 
-from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
+from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME
 
 # Email configuration
 FROM_EMAIL = SMTP_FROM_EMAIL
-FROM_NAME = "Auroran Health Dashboard"
+FROM_NAME = SMTP_FROM_NAME
 
 # Token storage file
 TOKENS_FILE = Path(__file__).parent / "password_reset_tokens.json"

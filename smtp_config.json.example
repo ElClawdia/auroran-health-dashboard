@@ -3,5 +3,6 @@
   "smtp_port": 587,
   "smtp_user": "health@auroranrunner.com",
   "smtp_password": "YOUR_SMTP_PASSWORD_HERE",
-  "smtp_from_email": "health@auroranrunner.com"
+  "smtp_from_email": "health@auroranrunner.com",
+  "smtp_from_name": "Auroran Health Dashboard"
 }
