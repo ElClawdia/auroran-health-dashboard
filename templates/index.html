@@ -702,7 +702,7 @@
                 <input type="number" step="0.1" class="card-input" id="weight-input" placeholder="kg">
                 <div class="card-trend" id="weight-trend"></div>
             </div>
-            <div class="card editable-card clickable" data-metric="calories" data-default-date="yesterday">
+            <div class="card editable-card clickable" data-metric="calories">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -974,11 +974,8 @@
         
         async function fetchData() {
             try {
-                // Determine calories date (yesterday relative to view date)
-                const viewDate = new Date(currentViewDate + 'T00:00:00');
-                const caloriesDate = new Date(viewDate);
-                caloriesDate.setDate(caloriesDate.getDate() - 1);
-                const caloriesDateStr = caloriesDate.toISOString().split('T')[0];
+                // Calories date = selected date
+                const caloriesDateStr = currentViewDate;
                 
                 // Fetch health for selected date
                 const healthRes = await fetch('/api/health/today?date=' + currentViewDate);
@@ -1009,7 +1006,7 @@
                 const workouts = await workoutsRes.json();
                 updateWorkouts(workouts);
                 
-                // Fetch calories (for day before selected date)
+                // Fetch calories for selected date
                 const caloriesRes = await fetch('/api/calories?date=' + caloriesDateStr);
                 const caloriesData = await caloriesRes.json();
                 updateCalories(caloriesData);

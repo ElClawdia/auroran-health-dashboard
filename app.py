@@ -815,10 +815,8 @@ def recommendations_today():
 @app.route('/api/calories')
 @login_required
 def calories():
-    """Get calories burned from workouts for yesterday (default) or specified date"""
-    # Default to yesterday since today's workouts may not be complete
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    date = request.args.get('date', yesterday)
+    """Get calories burned from workouts for today (default) or specified date"""
+    date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
     
     if not query_api:
         return jsonify({"calories": 0, "date": date})
