@@ -54,7 +54,24 @@ from config import SUUNTO_CLIENT_ID, SUUNTO_CLIENT_SECRET
 from config import STRAVA_ACCESS_TOKEN, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN
 from config import FLASK_HOST, FLASK_PORT, FLASK_DEBUG, FLASK_SECRET_KEY
 
-app.secret_key = FLASK_SECRET_KEY or secrets.token_hex(32)
+# Use persistent secret key - generate and save if not configured
+def get_or_create_secret_key():
+    """Get secret key from config or generate and persist one"""
+    if FLASK_SECRET_KEY:
+        return FLASK_SECRET_KEY
+    
+    # Try to load from file
+    secret_key_file = Path(__file__).parent / ".flask_secret_key"
+    if secret_key_file.exists():
+        return secret_key_file.read_text().strip()
+    
+    # Generate new key and save it
+    new_key = secrets.token_hex(32)
+    secret_key_file.write_text(new_key)
+    logger.info("Generated new Flask secret key")
+    return new_key
+
+app.secret_key = get_or_create_secret_key()
 
 # Initialize InfluxDB client with fallback
 influx_client = None

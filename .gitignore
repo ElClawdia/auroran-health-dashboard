@@ -19,6 +19,9 @@ users.json
 password_reset_tokens.json
 learned_params.json
 
+# Flask session secret key
+.flask_secret_key
+
 # Package lock files (track example files like smtp_config.json.example)
 package-lock.json
 
