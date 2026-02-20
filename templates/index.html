@@ -634,7 +634,7 @@
             <div class="date-nav-current is-today" id="date-current" title="Click to select date or go to today">
                 Today
             </div>
-            <input type="date" class="date-nav-input" id="date-picker-hidden">
+            <input type="date" class="date-nav-input" id="date-picker-hidden" autocomplete="off">
             <button class="date-nav-btn" id="date-next" title="Next day" disabled>
                 Next <span>▶</span>
             </button>
@@ -927,6 +927,8 @@
         }
         
         function initDateNavigation() {
+            // Always default to today on initial load
+            currentViewDate = getTodayDate();
             const prevBtn = document.getElementById('date-prev');
             const nextBtn = document.getElementById('date-next');
             const currentEl = document.getElementById('date-current');
@@ -1975,6 +1977,9 @@
         
         // Initial load - load manual values FIRST, then fetch automated data
         async function initialLoad() {
+            // Force today as default view date on page load
+            currentViewDate = getTodayDate();
+            updateDateNavigation();
             await loadManualValues();  // Wait for manual values to load first
             await fetchData();         // Then fetch automated data (which respects manual overrides)
         }
