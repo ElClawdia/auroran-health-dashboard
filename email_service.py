@@ -5,6 +5,7 @@ Sends verification emails for password changes
 """
 
 import smtplib
+import ssl
 import secrets
 import json
 from email.mime.text import MIMEText
@@ -13,7 +14,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 
-from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME
+from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME, SMTP_USE_SSL
 
 # Email configuration
 FROM_EMAIL = SMTP_FROM_EMAIL
@@ -221,10 +222,18 @@ Auroran Health Dashboard Team
     msg.attach(MIMEText(html_content, "html"))
     
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        if SMTP_USE_SSL:
+            # Port 465: Direct SSL/TLS connection
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
+        else:
+            # Port 587: STARTTLS
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
         print(f"Password reset email sent to {to_email}")
         return True
     except Exception as e:

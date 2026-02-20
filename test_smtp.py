@@ -8,13 +8,14 @@ Usage: python test_smtp.py [recipient_email]
 
 import sys
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
 from config import (
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, 
-    SMTP_FROM_EMAIL, SMTP_FROM_NAME
+    SMTP_FROM_EMAIL, SMTP_FROM_NAME, SMTP_USE_SSL
 )
 
 
@@ -25,6 +26,7 @@ def test_smtp_config():
     print("=" * 50)
     print(f"  Host:       {SMTP_HOST}")
     print(f"  Port:       {SMTP_PORT}")
+    print(f"  SSL/TLS:    {SMTP_USE_SSL}")
     print(f"  User:       {SMTP_USER}")
     print(f"  Password:   {'*' * len(SMTP_PASSWORD) if SMTP_PASSWORD else '(not set)'}")
     print(f"  From Email: {SMTP_FROM_EMAIL}")
@@ -44,14 +46,24 @@ def test_smtp_connection():
     print("\nTesting SMTP connection...")
     
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            print(f"  Connected to {SMTP_HOST}:{SMTP_PORT}")
-            
-            server.starttls()
-            print("  TLS encryption enabled")
-            
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            print("  Login successful")
+        if SMTP_USE_SSL:
+            # Port 465: Direct SSL/TLS connection
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10, context=context) as server:
+                print(f"  Connected to {SMTP_HOST}:{SMTP_PORT} (SSL/TLS)")
+                
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                print("  Login successful")
+        else:
+            # Port 587: STARTTLS
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+                print(f"  Connected to {SMTP_HOST}:{SMTP_PORT}")
+                
+                server.starttls()
+                print("  TLS encryption enabled (STARTTLS)")
+                
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                print("  Login successful")
             
         print("  Connection test PASSED")
         return True
@@ -129,10 +141,16 @@ Auroran Health Dashboard
     msg.attach(MIMEText(html_content, "html"))
     
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        if SMTP_USE_SSL:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10, context=context) as server:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
         
         print(f"  Test email sent successfully to {recipient}")
         return True
