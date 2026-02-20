@@ -863,17 +863,24 @@
         const manualValues = {}; // Store manual values locally
         const useManual = {}; // Track which metrics use manual values
         
-        // Current viewing date (default: today)
-        let currentViewDate = new Date().toISOString().split('T')[0];
+        // Current viewing date (default: today, local time)
+        let currentViewDate = getLocalDateString(new Date());
+        
+        function getLocalDateString(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
         
         function getTodayDate() {
-            return new Date().toISOString().split('T')[0];
+            return getLocalDateString(new Date());
         }
         
         function getYesterdayDate() {
             const d = new Date();
             d.setDate(d.getDate() - 1);
-            return d.toISOString().split('T')[0];
+            return getLocalDateString(d);
         }
         
         function formatDateDisplay(dateStr) {
@@ -908,7 +915,7 @@
         function changeDate(offset) {
             const d = new Date(currentViewDate + 'T00:00:00');
             d.setDate(d.getDate() + offset);
-            const newDate = d.toISOString().split('T')[0];
+            const newDate = getLocalDateString(d);
             const today = getTodayDate();
             
             // Don't go into the future
@@ -1547,7 +1554,7 @@
             if (card.dataset.defaultDate === 'yesterday') {
                 viewDate.setDate(viewDate.getDate() - 1);
             }
-            return viewDate.toISOString().split('T')[0];
+            return getLocalDateString(viewDate);
         }
         
         function setAutoPreviewState(card, editBtn, enabled) {
@@ -1685,7 +1692,7 @@
         
         async function saveManualValue(metric, value, date = null) {
             try {
-                const saveDate = date || new Date().toISOString().split('T')[0];
+                const saveDate = date || getLocalDateString(new Date());
                 const response = await fetch('/api/manual-values', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
