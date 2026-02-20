@@ -1703,8 +1703,15 @@
         // Add click handlers to clickable cards
         document.querySelectorAll('.card.clickable').forEach(card => {
             card.addEventListener('click', (e) => {
-                // Don't open modal if clicking on buttons or inputs
-                if (e.target.closest('.card-action-btn') || e.target.closest('.card-input')) {
+                // Don't open modal if clicking on buttons, inputs, or date picker
+                if (e.target.closest('.card-action-btn') || 
+                    e.target.closest('.card-input') || 
+                    e.target.closest('.card-date-picker')) {
+                    return;
+                }
+                // Don't open modal if card is in edit mode
+                const inputEl = card.querySelector('.card-input');
+                if (inputEl && inputEl.classList.contains('editing')) {
                     return;
                 }
                 const metric = card.dataset.metric;
