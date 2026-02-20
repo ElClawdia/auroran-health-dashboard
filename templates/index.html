@@ -611,6 +611,15 @@
         let trendsChart = null;
         let pmcChart = null;
         
+        // Manual value tracking - must be defined before functions that use them
+        const manualValues = {}; // Store manual values locally
+        const useManual = {}; // Track which metrics use manual values
+        
+        // Check if a metric should use manual value
+        function shouldUseManual(metric) {
+            return useManual[metric] === true && manualValues[metric] !== null && manualValues[metric] !== undefined;
+        }
+        
         async function fetchData() {
             try {
                 // Fetch today's health
@@ -677,13 +686,20 @@
         }
         
         function updateWeight(data) {
+            // Only update if no manual value is set locally
+            if (shouldUseManual('weight')) {
+                return; // Keep the manual value
+            }
+            
             const el = document.getElementById('weight-value');
             if (el && data.weight) {
                 el.textContent = data.weight.toFixed(1) + ' kg';
-                // Mark as manual if from manual source
+                // Mark as manual if from manual source (from API)
                 const card = el.closest('.editable-card');
                 if (card && data.source === 'manual') {
                     card.classList.add('manual-value');
+                    useManual['weight'] = true;
+                    manualValues['weight'] = data.weight;
                 }
             } else if (el) {
                 el.textContent = '--';
@@ -691,10 +707,19 @@
         }
         
         function updateHealthCards(data) {
-            document.getElementById('sleep-value').textContent = data.sleep_hours ? data.sleep_hours.toFixed(1) + 'h' : '--';
-            document.getElementById('hrv-value').textContent = data.hrv ? data.hrv + ' ms' : '--';
-            document.getElementById('rhr-value').textContent = data.resting_hr ? data.resting_hr + ' bpm' : '--';
-            document.getElementById('steps-value').textContent = data.steps ? data.steps.toLocaleString() : '--';
+            // Only update if no manual value is set
+            if (!shouldUseManual('sleep')) {
+                document.getElementById('sleep-value').textContent = data.sleep_hours ? data.sleep_hours.toFixed(1) + 'h' : '--';
+            }
+            if (!shouldUseManual('hrv')) {
+                document.getElementById('hrv-value').textContent = data.hrv ? data.hrv + ' ms' : '--';
+            }
+            if (!shouldUseManual('resting_hr')) {
+                document.getElementById('rhr-value').textContent = data.resting_hr ? data.resting_hr + ' bpm' : '--';
+            }
+            if (!shouldUseManual('steps')) {
+                document.getElementById('steps-value').textContent = data.steps ? data.steps.toLocaleString() : '--';
+            }
             
             if (data.trend) {
                 document.getElementById('sleep-trend').innerHTML = formatTrend(data.trend.sleep, 'sleep');
@@ -880,35 +905,42 @@
         }
         
         function updatePMC(data) {
-            // CTL (Fitness) - 42 day average
-            document.getElementById('ctl-value').textContent = data.ctl || '--';
+            // CTL (Fitness) - 42 day average - only update if no manual value
+            if (!shouldUseManual('ctl')) {
+                document.getElementById('ctl-value').textContent = data.ctl || '--';
+            }
             
-            // ATL (Strain) - 7 day average
-            document.getElementById('atl-value').textContent = data.atl || '--';
+            // ATL (Strain) - 7 day average - only update if no manual value
+            if (!shouldUseManual('atl')) {
+                document.getElementById('atl-value').textContent = data.atl || '--';
+            }
             
             // TSB (Form) = CTL - ATL
             const tsbCard = document.getElementById('tsb-card');
             const tsbValue = document.getElementById('tsb-value');
             const tsbStatus = document.getElementById('tsb-status');
             
-            if (data.tsb !== undefined) {
-                const tsb = data.tsb;
-                tsbValue.textContent = tsb > 0 ? '+' + tsb : tsb;
-                
-                // Color code based on TSB
-                if (tsb > 10) {
-                    tsbCard.style.borderColor = '#3fb950'; // Green - fresh
-                    tsbStatus.innerHTML = '<span style="color: #3fb950;">' + data.status + '</span>';
-                } else if (tsb > -10) {
-                    tsbCard.style.borderColor = '#d29922'; // Yellow - balanced
-                    tsbStatus.innerHTML = '<span style="color: #d29922;">' + data.status + '</span>';
+            // Only update TSB if no manual value
+            if (!shouldUseManual('tsb')) {
+                if (data.tsb !== undefined) {
+                    const tsb = data.tsb;
+                    tsbValue.textContent = tsb > 0 ? '+' + tsb : tsb;
+                    
+                    // Color code based on TSB
+                    if (tsb > 10) {
+                        tsbCard.style.borderColor = '#3fb950'; // Green - fresh
+                        tsbStatus.innerHTML = '<span style="color: #3fb950;">' + data.status + '</span>';
+                    } else if (tsb > -10) {
+                        tsbCard.style.borderColor = '#d29922'; // Yellow - balanced
+                        tsbStatus.innerHTML = '<span style="color: #d29922;">' + data.status + '</span>';
+                    } else {
+                        tsbCard.style.borderColor = '#f85149'; // Red - fatigued
+                        tsbStatus.innerHTML = '<span style="color: #f85149;">' + data.status + '</span>';
+                    }
                 } else {
-                    tsbCard.style.borderColor = '#f85149'; // Red - fatigued
-                    tsbStatus.innerHTML = '<span style="color: #f85149;">' + data.status + '</span>';
+                    tsbValue.textContent = '--';
+                    tsbStatus.textContent = 'No data';
                 }
-            } else {
-                tsbValue.textContent = '--';
-                tsbStatus.textContent = 'No data';
             }
 
             updatePMCChart(data.chart || {});
@@ -1147,9 +1179,6 @@
         }
         
         // Manual value editing functionality
-        const manualValues = {}; // Store manual values locally
-        const useManual = {}; // Track which metrics use manual values
-        
         function initEditableCards() {
             document.querySelectorAll('.editable-card').forEach(card => {
                 const metric = card.dataset.metric;
@@ -1292,7 +1321,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     Object.entries(data).forEach(([metric, value]) => {
-                        if (value !== null) {
+                        if (value !== null && value !== undefined) {
                             manualValues[metric] = value;
                             useManual[metric] = true;
                             const card = document.querySelector(`.editable-card[data-metric="${metric}"]`);
@@ -1311,9 +1340,12 @@
         // Initialize editable cards
         initEditableCards();
         
-        // Initial load
-        fetchData();
-        loadManualValues();
+        // Initial load - load manual values FIRST, then fetch automated data
+        async function initialLoad() {
+            await loadManualValues();  // Wait for manual values to load first
+            await fetchData();         // Then fetch automated data (which respects manual overrides)
+        }
+        initialLoad();
         
         // Refresh every 5 minutes
         setInterval(fetchData, 300000);

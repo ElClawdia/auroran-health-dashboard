@@ -570,11 +570,13 @@ def manual_values():
             return jsonify({})
         
         try:
+            # Query manual values, excluding deleted ones
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
               |> range(start: -30d)
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r.date == "{date}")
+              |> filter(fn: (r) => r.deleted != "true")
               |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
             '''
             result = query_api.query_data_frame(query)
@@ -600,6 +602,7 @@ def manual_values():
                 else:
                     values[metric] = None
             
+            logger.info(f"Manual values for {date}: {values}")
             return jsonify(values)
         except Exception as e:
             logger.error(f"Error fetching manual values: {e}")

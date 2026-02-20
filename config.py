@@ -1,6 +1,8 @@
 """
 Configuration for Health Dashboard
 Set these environment variables or edit secrets.json
+
+SMTP configuration is loaded from smtp_config.json (see smtp_config.json.example)
 """
 
 import os
@@ -22,11 +24,23 @@ if SECRETS_FILE.exists():
     with open(SECRETS_FILE) as f:
         secrets = json.load(f)
 
+# Load SMTP config from separate file
+SMTP_CONFIG_FILE = Path(__file__).parent / "smtp_config.json"
+smtp_config = {}
+if SMTP_CONFIG_FILE.exists():
+    with open(SMTP_CONFIG_FILE) as f:
+        smtp_config = json.load(f)
+    logger.info("SMTP configuration loaded from smtp_config.json")
+
 def get_secret(key, default=''):
     """Get secret from env var or secrets file"""
     # Support conventional uppercase env vars (e.g. INFLUXDB_TOKEN) while keeping
     # existing secrets.json keys (e.g. influxdb_token).
     return os.getenv(key) or os.getenv(key.upper()) or secrets.get(key, default)
+
+def get_smtp_config(key, default=''):
+    """Get SMTP config from env var or smtp_config.json"""
+    return os.getenv(key.upper()) or smtp_config.get(key, default)
 
 # InfluxDB Configuration
 INFLUXDB_URL = os.getenv('INFLUXDB_URL', get_secret('influxdb_url', 'http://influxdb:8086'))
@@ -57,12 +71,12 @@ FLASK_PORT = int(os.getenv('PORT', get_secret('port', 5000)))
 FLASK_DEBUG = os.getenv('FLASK_DEBUG', str(get_secret('flask_debug', False))).lower() == 'true'
 FLASK_SECRET_KEY = get_secret('flask_secret_key', '')
 
-# SMTP Configuration for email
-SMTP_HOST = os.getenv('SMTP_HOST', get_secret('smtp_host', 'smtp.auroranrunner.com'))
-SMTP_PORT = int(os.getenv('SMTP_PORT', get_secret('smtp_port', 587)))
-SMTP_USER = os.getenv('SMTP_USER', get_secret('smtp_user', 'health@auroranrunner.com'))
-SMTP_PASSWORD = get_secret('smtp_password', '')
-SMTP_FROM_EMAIL = os.getenv('SMTP_FROM_EMAIL', get_secret('smtp_from_email', 'health@auroranrunner.com'))
+# SMTP Configuration for email (loaded from smtp_config.json)
+SMTP_HOST = get_smtp_config('smtp_host', 'smtp.auroranrunner.com')
+SMTP_PORT = int(get_smtp_config('smtp_port', 587))
+SMTP_USER = get_smtp_config('smtp_user', 'health@auroranrunner.com')
+SMTP_PASSWORD = get_smtp_config('smtp_password', '')
+SMTP_FROM_EMAIL = get_smtp_config('smtp_from_email', 'health@auroranrunner.com')
 
 # Demo Mode (if no InfluxDB configured)
 DEMO_MODE = not INFLUXDB_TOKEN

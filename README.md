@@ -115,7 +115,8 @@ A comprehensive health monitoring and exercise planning system that:
 - (Optional) Strava API access
 
 ### Configuration
-Create `secrets.json`:
+
+**1. Create `secrets.json`** (API credentials):
 ```json
 {
   "influxdb_token": "your-token-here",
@@ -124,6 +125,18 @@ Create `secrets.json`:
   "strava_refresh_token": "your-refresh-token"
 }
 ```
+
+**2. Create `smtp_config.json`** (for password reset emails):
+```json
+{
+  "smtp_host": "smtp.auroranrunner.com",
+  "smtp_port": 587,
+  "smtp_user": "health@auroranrunner.com",
+  "smtp_password": "YOUR_SMTP_PASSWORD",
+  "smtp_from_email": "health@auroranrunner.com"
+}
+```
+See `smtp_config.json.example` for template.
 
 ### Running
 

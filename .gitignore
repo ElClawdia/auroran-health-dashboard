@@ -8,9 +8,19 @@ secrets.json
 passwords.txt
 renew-strava-tokens/strava_tokens.json
 strava/strava_tokens.json
-*.json
 sirius_influxdb_secre_token.json
 local_influxdb_secret_token.json
+
+# SMTP configuration (contains password)
+smtp_config.json
+
+# User data (contains password hashes)
+users.json
+password_reset_tokens.json
+learned_params.json
+
+# Package lock files (track example files like smtp_config.json.example)
+package-lock.json
 
 # Python
 __pycache__/
