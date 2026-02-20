@@ -42,14 +42,12 @@ def save_tokens(tokens: dict):
         json.dump(tokens, f, indent=2)
 
 
-def generate_reset_token(username: str, new_password_hash: str, salt: str) -> str:
+def generate_reset_token(username: str) -> str:
     """
-    Generate a password reset token and store it with the pending new password.
+    Generate a password reset token for email verification.
     
     Args:
         username: The user requesting the reset
-        new_password_hash: The hash of the new password
-        salt: The salt used for hashing
         
     Returns:
         The generated token
@@ -64,11 +62,9 @@ def generate_reset_token(username: str, new_password_hash: str, salt: str) -> st
         if datetime.fromisoformat(v["expires"]) > now
     }
     
-    # Store new token
+    # Store new token (just username, password will be set when user clicks link)
     tokens[token] = {
         "username": username,
-        "password_hash": new_password_hash,
-        "salt": salt,
         "expires": (now + timedelta(hours=TOKEN_EXPIRY_HOURS)).isoformat(),
         "created": now.isoformat()
     }

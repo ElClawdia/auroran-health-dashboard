@@ -203,26 +203,11 @@
         <div class="card">
             <h2>Change Password</h2>
             <p style="color: var(--text-dim); margin-bottom: 20px; font-size: 14px;">
-                A verification email will be sent to {{ user.email }} to confirm the password change.
+                Click the button below to receive a password reset link at {{ user.email }}.
             </p>
             <form id="password-form">
-                <div class="form-group">
-                    <label for="current_password">Current Password</label>
-                    <input type="password" id="current_password" name="current_password" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="new_password">New Password</label>
-                    <input type="password" id="new_password" name="new_password" required minlength="8">
-                </div>
-                
-                <div class="form-group">
-                    <label for="confirm_password">Confirm New Password</label>
-                    <input type="password" id="confirm_password" name="confirm_password" required>
-                </div>
-                
                 <div class="form-actions">
-                    <button type="submit" class="btn" id="password-btn">Send Verification Email</button>
+                    <button type="submit" class="btn" id="password-btn">Send Password Reset Link</button>
                 </div>
             </form>
             <div id="password-message" style="margin-top: 15px; display: none;"></div>
@@ -259,29 +244,16 @@
         document.getElementById('password-form').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const newPassword = document.getElementById('new_password').value;
-            const confirmPassword = document.getElementById('confirm_password').value;
-            
-            if (newPassword !== confirmPassword) {
-                alert('New passwords do not match');
-                return;
-            }
-            
             const btn = document.getElementById('password-btn');
             const msgDiv = document.getElementById('password-message');
             btn.disabled = true;
             btn.textContent = 'Sending...';
             
-            const data = {
-                current_password: document.getElementById('current_password').value,
-                new_password: newPassword
-            };
-            
             try {
                 const response = await fetch('/account/change-password', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(data)
+                    body: JSON.stringify({})
                 });
                 
                 const result = await response.json();
@@ -296,20 +268,19 @@
                     msgDiv.innerHTML = result.message;
                     
                     if (result.verification_link) {
-                        msgDiv.innerHTML += '<br><br><a href="' + result.verification_link + '" style="color: var(--primary);">Click here to verify (testing mode)</a>';
+                        msgDiv.innerHTML += '<br><br><a href="' + result.verification_link + '" style="color: var(--primary);">Click here to set password (testing mode)</a>';
                     }
                     
-                    document.getElementById('password-form').reset();
                     btn.textContent = 'Email Sent!';
                 } else {
                     btn.disabled = false;
-                    btn.textContent = 'Send Verification Email';
-                    alert(result.error || 'Password change failed');
+                    btn.textContent = 'Send Password Reset Link';
+                    alert(result.error || 'Failed to send reset link');
                 }
             } catch (error) {
                 btn.disabled = false;
-                btn.textContent = 'Send Verification Email';
-                alert('Password change failed: ' + error.message);
+                btn.textContent = 'Send Password Reset Link';
+                alert('Failed to send reset link: ' + error.message);
             }
         });
     </script>

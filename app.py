@@ -241,31 +241,14 @@ def account_page():
 @app.route('/account/change-password', methods=['POST'])
 @login_required
 def request_password_change():
-    """Request password change - sends verification email"""
+    """Request password change - sends verification email with link to set new password"""
     user = get_current_user()
-    data = request.get_json() if request.is_json else request.form
     
-    current_password = data.get('current_password')
-    new_password = data.get('new_password')
-    
-    if not current_password or not new_password:
-        return jsonify({"error": "Current and new password required"}), 400
-    
-    # Verify current password
-    if not authenticate(session['user'], current_password):
-        return jsonify({"error": "Current password is incorrect"}), 400
-    
-    if len(new_password) < 8:
-        return jsonify({"error": "New password must be at least 8 characters"}), 400
-    
-    # Hash the new password
-    password_hash, salt = hash_password(new_password)
-    
-    # Generate reset token
-    token = generate_reset_token(session['user'], password_hash, salt)
+    # Generate reset token (no password yet - user will set it after clicking link)
+    token = generate_reset_token(session['user'])
     
     # Build verification link
-    reset_link = url_for('verify_password_change', token=token, _external=True)
+    reset_link = url_for('set_new_password', token=token, _external=True)
     
     # Send email
     email_sent = send_password_reset_email(
@@ -277,7 +260,7 @@ def request_password_change():
     if email_sent:
         return jsonify({
             "success": True,
-            "message": f"Verification email sent to {user['email']}. Please check your inbox."
+            "message": f"Password reset link sent to {user['email']}. Please check your inbox."
         })
     else:
         return jsonify({
@@ -287,24 +270,57 @@ def request_password_change():
         })
 
 
-@app.route('/verify-password/<token>')
-def verify_password_change(token):
-    """Verify password change from email link"""
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+def set_new_password(token):
+    """Show form to set new password after clicking email link"""
+    from email_service import verify_reset_token
+    
+    # Verify token is valid (don't consume yet)
+    token_data = verify_reset_token(token)
+    
+    if not token_data:
+        return render_template('password_verified.html', 
+                             success=False, 
+                             message="Invalid or expired password reset link.")
+    
+    if request.method == 'GET':
+        # Show the password reset form
+        return render_template('set_password.html', token=token)
+    
+    # POST - process new password
+    new_password = request.form.get('new_password')
+    confirm_password = request.form.get('confirm_password')
+    
+    if not new_password or not confirm_password:
+        return render_template('set_password.html', token=token, 
+                             error="Please fill in both password fields.")
+    
+    if new_password != confirm_password:
+        return render_template('set_password.html', token=token,
+                             error="Passwords do not match.")
+    
+    if len(new_password) < 8:
+        return render_template('set_password.html', token=token,
+                             error="Password must be at least 8 characters.")
+    
+    # Now consume the token
+    from email_service import consume_reset_token
     token_data = consume_reset_token(token)
     
     if not token_data:
         return render_template('password_verified.html', 
                              success=False, 
-                             message="Invalid or expired verification link.")
+                             message="Invalid or expired password reset link.")
     
-    # Update the user's password
+    # Hash and save the new password
     from auth import load_users, save_users
+    password_hash, salt = hash_password(new_password)
     users = load_users()
     username = token_data['username']
     
     if username in users:
-        users[username]['password_hash'] = token_data['password_hash']
-        users[username]['salt'] = token_data['salt']
+        users[username]['password_hash'] = password_hash
+        users[username]['salt'] = salt
         save_users(users)
         
         return render_template('password_verified.html',
