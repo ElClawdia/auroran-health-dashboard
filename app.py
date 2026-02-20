@@ -449,13 +449,39 @@ def health_history():
         def clean_series(series, digits=2):
             return [None if pd.isna(v) else round(float(v), digits) for v in series.tolist()]
 
+        # Also fetch weight history from manual_values
+        weight_data = []
+        try:
+            weight_query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: -{days}d)
+              |> filter(fn: (r) => r._measurement == "manual_values")
+              |> filter(fn: (r) => r._field == "weight")
+              |> filter(fn: (r) => r.deleted != "true")
+            '''
+            weight_result = query_api.query(weight_query)
+            weight_by_date = {}
+            for table in weight_result:
+                for record in table.records:
+                    date = record.values.get('date', '')
+                    if date:
+                        weight_by_date[date] = float(record.get_value())
+            
+            # Map weights to the dates array
+            for date in df["date"].tolist():
+                weight_data.append(weight_by_date.get(date))
+        except Exception as e:
+            logger.warning(f"Could not fetch weight history: {e}")
+            weight_data = [None] * len(df)
+
         return jsonify({
             "dates": df["date"].tolist(),
             "hrv": clean_series(df["hrv_avg"], 2) if "hrv_avg" in df else [],
             "resting_hr": clean_series(df["resting_hr"], 2) if "resting_hr" in df else [],
             "sleep": clean_series(df["sleep_duration_hours"], 2) if "sleep_duration_hours" in df else [],
             "recovery": clean_series(df["recovery_score"], 1) if "recovery_score" in df else [],
-            "steps": clean_series(df["steps"], 0) if "steps" in df else []
+            "steps": clean_series(df["steps"], 0) if "steps" in df else [],
+            "weight": weight_data
         })
     except Exception as e:
         logger.error(f"Error fetching health history: {e}")

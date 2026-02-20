@@ -186,7 +186,130 @@
         .card.manual-value .card-value::after {
             content: ' ✎';
             font-size: 0.6em;
-            color: var(--warning);
+            color: var(--text-dim);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        .card.manual-value:hover .card-value::after {
+            opacity: 1;
+        }
+        
+        .card.hidden-card {
+            opacity: 0.4;
+        }
+        
+        .card.hidden-card .card-value {
+            filter: blur(8px);
+        }
+        
+        .card-action-btn.hide-btn {
+            position: absolute;
+            bottom: 8px;
+            left: 8px;
+            top: auto;
+            right: auto;
+        }
+        
+        .card.clickable {
+            cursor: pointer;
+        }
+        
+        .card.clickable:hover {
+            border-color: var(--primary);
+        }
+        
+        /* Trend Modal */
+        .trend-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .trend-modal-overlay.active {
+            display: flex;
+        }
+        
+        .trend-modal {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            width: 90%;
+            max-width: 800px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .trend-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .trend-modal-header h2 {
+            font-size: 1.5rem;
+            color: var(--text);
+        }
+        
+        .trend-modal-close {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: var(--border);
+            color: var(--text);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        
+        .trend-modal-close:hover {
+            background: var(--danger);
+        }
+        
+        .trend-modal-chart {
+            height: 300px;
+            margin-bottom: 20px;
+        }
+        
+        .trend-modal-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 16px;
+        }
+        
+        .trend-stat {
+            background: var(--bg);
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .trend-stat-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        
+        .trend-stat-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text);
         }
         
         .card-trend {
@@ -425,7 +548,7 @@
         
         <!-- Today's Stats -->
         <div class="grid">
-            <div class="card editable-card" data-metric="sleep">
+            <div class="card editable-card clickable" data-metric="sleep">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -435,7 +558,7 @@
                 <input type="number" step="0.1" class="card-input" id="sleep-input" placeholder="Hours">
                 <div class="card-trend" id="sleep-trend"></div>
             </div>
-            <div class="card editable-card" data-metric="hrv">
+            <div class="card editable-card clickable" data-metric="hrv">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -445,7 +568,7 @@
                 <input type="number" step="1" class="card-input" id="hrv-input" placeholder="ms">
                 <div class="card-trend" id="hrv-trend"></div>
             </div>
-            <div class="card editable-card" data-metric="resting_hr">
+            <div class="card editable-card clickable" data-metric="resting_hr">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -455,7 +578,7 @@
                 <input type="number" step="1" class="card-input" id="rhr-input" placeholder="bpm">
                 <div class="card-trend" id="rhr-trend"></div>
             </div>
-            <div class="card editable-card" data-metric="steps">
+            <div class="card editable-card clickable" data-metric="steps">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -469,11 +592,12 @@
         
         <!-- Weight & Calories -->
         <div class="grid">
-            <div class="card editable-card" data-metric="weight">
+            <div class="card editable-card clickable" data-metric="weight">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
+                <button class="card-action-btn hide-btn" title="Hide/Show value">👁</button>
                 <div class="card-label">⚖️ Weight</div>
                 <div class="card-value" id="weight-value">--</div>
                 <input type="number" step="0.1" class="card-input" id="weight-input" placeholder="kg">
@@ -488,7 +612,7 @@
         
         <!-- PMC / Training Load -->
         <div class="grid">
-            <div class="card editable-card" data-metric="ctl" style="border-color: var(--primary);">
+            <div class="card editable-card clickable" data-metric="ctl" style="border-color: var(--primary);">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -498,7 +622,7 @@
                 <input type="number" step="0.1" class="card-input" id="ctl-input" placeholder="CTL">
                 <div class="card-trend" style="color: var(--text-dim);">42-day avg</div>
             </div>
-            <div class="card editable-card" data-metric="atl" style="border-color: var(--warning);">
+            <div class="card editable-card clickable" data-metric="atl" style="border-color: var(--warning);">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -508,7 +632,7 @@
                 <input type="number" step="0.1" class="card-input" id="atl-input" placeholder="ATL">
                 <div class="card-trend" style="color: var(--text-dim);">7-day avg</div>
             </div>
-            <div class="card editable-card" data-metric="tsb" id="tsb-card">
+            <div class="card editable-card clickable" data-metric="tsb" id="tsb-card">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -602,6 +726,22 @@
             <div class="chart-title">🏃 Recent Workouts</div>
             <div id="workouts-list">
                 <div class="loading">Loading workouts...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Trend Modal -->
+    <div class="trend-modal-overlay" id="trend-modal">
+        <div class="trend-modal">
+            <div class="trend-modal-header">
+                <h2 id="trend-modal-title">Metric Trend</h2>
+                <button class="trend-modal-close" id="trend-modal-close">×</button>
+            </div>
+            <div class="trend-modal-chart">
+                <canvas id="trend-modal-chart"></canvas>
+            </div>
+            <div class="trend-modal-stats" id="trend-modal-stats">
+                <!-- Stats will be populated dynamically -->
             </div>
         </div>
     </div>
@@ -1339,6 +1479,218 @@
         
         // Initialize editable cards
         initEditableCards();
+        
+        // Trend modal functionality
+        let trendModalChart = null;
+        const metricConfig = {
+            sleep: { label: 'Sleep', unit: 'h', color: '#58a6ff', icon: '💤', field: 'sleep' },
+            hrv: { label: 'HRV', unit: 'ms', color: '#3fb950', icon: '❤️', field: 'hrv' },
+            resting_hr: { label: 'Resting HR', unit: 'bpm', color: '#f85149', icon: '🫀', field: 'resting_hr' },
+            steps: { label: 'Steps', unit: '', color: '#a371f7', icon: '👟', field: 'steps' },
+            weight: { label: 'Weight', unit: 'kg', color: '#f0883e', icon: '⚖️', field: 'weight' },
+            ctl: { label: 'CTL (Fitness)', unit: '', color: '#58a6ff', icon: '💪', field: 'ctl' },
+            atl: { label: 'ATL (Strain)', unit: '', color: '#d29922', icon: '🔥', field: 'atl' },
+            tsb: { label: 'TSB (Form)', unit: '', color: '#3fb950', icon: '⚖️', field: 'tsb' }
+        };
+        
+        async function openTrendModal(metric) {
+            const config = metricConfig[metric];
+            if (!config) return;
+            
+            const modal = document.getElementById('trend-modal');
+            const title = document.getElementById('trend-modal-title');
+            const statsContainer = document.getElementById('trend-modal-stats');
+            
+            title.textContent = `${config.icon} ${config.label} - 30 Day Trend`;
+            modal.classList.add('active');
+            
+            // Fetch trend data
+            try {
+                let data = [];
+                let dates = [];
+                
+                if (['ctl', 'atl', 'tsb'].includes(metric)) {
+                    // PMC data
+                    const response = await fetch('/api/pmc?days=30');
+                    const pmcData = await response.json();
+                    if (pmcData.chart) {
+                        dates = pmcData.chart.dates || [];
+                        data = pmcData.chart[metric] || [];
+                    }
+                } else {
+                    // Health history data
+                    const response = await fetch('/api/health/history?days=30');
+                    const historyData = await response.json();
+                    dates = historyData.dates || [];
+                    data = historyData[config.field] || [];
+                }
+                
+                // Calculate stats
+                const validData = data.filter(v => v !== null && v !== undefined);
+                const avg = validData.length > 0 ? validData.reduce((a, b) => a + b, 0) / validData.length : 0;
+                const min = validData.length > 0 ? Math.min(...validData) : 0;
+                const max = validData.length > 0 ? Math.max(...validData) : 0;
+                const latest = validData.length > 0 ? validData[validData.length - 1] : 0;
+                
+                // Update stats
+                statsContainer.innerHTML = `
+                    <div class="trend-stat">
+                        <div class="trend-stat-label">Current</div>
+                        <div class="trend-stat-value">${formatValue(latest, metric)}</div>
+                    </div>
+                    <div class="trend-stat">
+                        <div class="trend-stat-label">Average</div>
+                        <div class="trend-stat-value">${formatValue(avg, metric)}</div>
+                    </div>
+                    <div class="trend-stat">
+                        <div class="trend-stat-label">Min</div>
+                        <div class="trend-stat-value">${formatValue(min, metric)}</div>
+                    </div>
+                    <div class="trend-stat">
+                        <div class="trend-stat-label">Max</div>
+                        <div class="trend-stat-value">${formatValue(max, metric)}</div>
+                    </div>
+                `;
+                
+                // Create chart
+                const ctx = document.getElementById('trend-modal-chart').getContext('2d');
+                if (trendModalChart) {
+                    trendModalChart.destroy();
+                }
+                
+                trendModalChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: dates.map(d => d ? d.slice(5) : ''),
+                        datasets: [{
+                            label: config.label,
+                            data: data,
+                            borderColor: config.color,
+                            backgroundColor: config.color + '20',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 2,
+                            pointRadius: 3,
+                            pointHoverRadius: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: (ctx) => `${config.label}: ${formatValue(ctx.raw, metric)}`
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                ticks: { color: '#8b949e' },
+                                grid: { color: '#30363d' }
+                            },
+                            y: {
+                                ticks: { 
+                                    color: config.color,
+                                    callback: (v) => formatValue(v, metric)
+                                },
+                                grid: { color: '#30363d' }
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading trend data:', error);
+                statsContainer.innerHTML = '<div class="trend-stat"><div class="trend-stat-value">Error loading data</div></div>';
+            }
+        }
+        
+        function formatValue(value, metric) {
+            if (value === null || value === undefined) return '--';
+            const config = metricConfig[metric];
+            if (metric === 'steps') {
+                return Math.round(value).toLocaleString();
+            } else if (metric === 'tsb') {
+                return (value >= 0 ? '+' : '') + value.toFixed(1);
+            } else if (['ctl', 'atl', 'hrv', 'resting_hr'].includes(metric)) {
+                return Math.round(value) + (config.unit ? ' ' + config.unit : '');
+            } else {
+                return value.toFixed(1) + (config.unit ? ' ' + config.unit : '');
+            }
+        }
+        
+        function closeTrendModal() {
+            const modal = document.getElementById('trend-modal');
+            modal.classList.remove('active');
+            if (trendModalChart) {
+                trendModalChart.destroy();
+                trendModalChart = null;
+            }
+        }
+        
+        // Close modal on button click or overlay click
+        document.getElementById('trend-modal-close').addEventListener('click', closeTrendModal);
+        document.getElementById('trend-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'trend-modal') {
+                closeTrendModal();
+            }
+        });
+        
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeTrendModal();
+            }
+        });
+        
+        // Add click handlers to clickable cards
+        document.querySelectorAll('.card.clickable').forEach(card => {
+            card.addEventListener('click', (e) => {
+                // Don't open modal if clicking on buttons or inputs
+                if (e.target.closest('.card-action-btn') || e.target.closest('.card-input')) {
+                    return;
+                }
+                const metric = card.dataset.metric;
+                if (metric) {
+                    openTrendModal(metric);
+                }
+            });
+        });
+        
+        // Hide/show functionality for weight card
+        const hiddenCards = JSON.parse(localStorage.getItem('hiddenCards') || '{}');
+        
+        function initHideButtons() {
+            document.querySelectorAll('.hide-btn').forEach(btn => {
+                const card = btn.closest('.card');
+                const metric = card.dataset.metric;
+                
+                // Apply saved hidden state
+                if (hiddenCards[metric]) {
+                    card.classList.add('hidden-card');
+                    btn.textContent = '👁‍🗨';
+                    btn.title = 'Show value';
+                }
+                
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const isHidden = card.classList.toggle('hidden-card');
+                    hiddenCards[metric] = isHidden;
+                    localStorage.setItem('hiddenCards', JSON.stringify(hiddenCards));
+                    
+                    if (isHidden) {
+                        btn.textContent = '👁‍🗨';
+                        btn.title = 'Show value';
+                    } else {
+                        btn.textContent = '👁';
+                        btn.title = 'Hide value';
+                    }
+                });
+            });
+        }
+        
+        initHideButtons();
         
         // Initial load - load manual values FIRST, then fetch automated data
         async function initialLoad() {
