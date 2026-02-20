@@ -713,37 +713,32 @@ def manual_values():
             return jsonify({})
         
         try:
-            # Query manual values, excluding deleted ones
+            # Query latest manual values per metric (respect deleted markers)
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
               |> range(start: -30d)
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r.date == "{date}")
-              |> filter(fn: (r) => r.deleted != "true")
-              |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+              |> group(columns: ["_field"])
+              |> sort(columns: ["_time"], desc: true)
+              |> limit(n: 1)
             '''
-            result = query_api.query_data_frame(query)
+            result = query_api.query(query)
             
-            if isinstance(result, list):
-                if len(result) == 0:
-                    return jsonify({})
-                result = pd.concat(result, ignore_index=True)
-            
-            if result.empty:
-                return jsonify({})
-            
-            # Get the latest values for each metric
             metrics = ['sleep', 'hrv', 'resting_hr', 'steps', 'weight', 'calories', 'ctl', 'atl', 'tsb']
-            values = {}
-            for metric in metrics:
-                if metric in result.columns:
-                    val = result[metric].dropna()
-                    if len(val) > 0:
-                        values[metric] = float(val.iloc[-1])
-                    else:
+            values = {m: None for m in metrics}
+            
+            for table in result:
+                for record in table.records:
+                    metric = record.get_field()
+                    if metric not in values:
+                        continue
+                    is_deleted = str(record.values.get('deleted', '')).lower() == 'true'
+                    if is_deleted:
                         values[metric] = None
-                else:
-                    values[metric] = None
+                    else:
+                        val = record.get_value()
+                        values[metric] = None if val is None else float(val)
             
             logger.info(f"Manual values for {date}: {values}")
             return jsonify(values)
