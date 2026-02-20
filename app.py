@@ -9,9 +9,10 @@ Access: http://localhost:5000
 
 import os
 import sys
+import secrets
 import logging
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
 import pandas as pd
@@ -40,9 +41,12 @@ logger = logging.getLogger(__name__)
 from suunto_client import SuuntoClient
 from strava_client import StravaClient, MockStravaClient
 from planner import ExercisePlanner
-from training_load import calculate_training_load, calculate_ctl_atl_tsb, calculate_pmc_series, get_status_description
+from training_load import calculate_training_load, calculate_ctl_atl_tsb, calculate_pmc_series, get_status_description, reload_params
+from auth import login_required, authenticate, get_current_user, update_user, get_user
+from formula_learning import load_params, run_learning_cycle
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 
 # Configuration
 from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
@@ -143,12 +147,101 @@ def get_mock_workouts():
 
 
 @app.route('/')
+@login_required
 def index():
     """Main dashboard page"""
-    return render_template('index.html')
+    user = get_current_user()
+    return render_template('index.html', user=user)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    """Login page"""
+    if request.method == 'POST':
+        data = request.get_json() if request.is_json else request.form
+        username = data.get('username', '')
+        password = data.get('password', '')
+        
+        user = authenticate(username, password)
+        if user:
+            session['user'] = username
+            session.permanent = True
+            app.permanent_session_lifetime = timedelta(days=30)
+            if request.is_json:
+                return jsonify({"success": True, "user": user["full_name"]})
+            return redirect(url_for('index'))
+        
+        if request.is_json:
+            return jsonify({"error": "Invalid username or password"}), 401
+        return render_template('login.html', error="Invalid username or password")
+    
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    """Logout and clear session"""
+    session.pop('user', None)
+    return redirect(url_for('login_page'))
+
+
+@app.route('/register')
+def register_page():
+    """Registration page (currently disabled)"""
+    return render_template('register.html')
+
+
+@app.route('/account', methods=['GET', 'POST'])
+@login_required
+def account_page():
+    """Account settings page"""
+    user = get_current_user()
+    
+    if request.method == 'POST':
+        data = request.get_json() if request.is_json else request.form
+        updates = {}
+        
+        if data.get('full_name'):
+            updates['full_name'] = data['full_name']
+        if data.get('email'):
+            updates['email'] = data['email']
+        if data.get('new_password') and data.get('current_password'):
+            # Verify current password first
+            if not authenticate(session['user'], data['current_password']):
+                if request.is_json:
+                    return jsonify({"error": "Current password is incorrect"}), 400
+                return render_template('account.html', user=user, error="Current password is incorrect")
+            updates['new_password'] = data['new_password']
+        
+        if updates:
+            update_user(session['user'], updates)
+            user = get_current_user()  # Refresh user data
+            if request.is_json:
+                return jsonify({"success": True})
+        
+        if request.is_json:
+            return jsonify({"success": True})
+        return render_template('account.html', user=user, success="Account updated successfully")
+    
+    return render_template('account.html', user=user)
+
+
+@app.route('/api/user')
+@login_required
+def api_user():
+    """Get current user info"""
+    user = get_current_user()
+    if user:
+        return jsonify({
+            "username": user["username"],
+            "full_name": user["full_name"],
+            "email": user["email"]
+        })
+    return jsonify({"error": "Not logged in"}), 401
 
 
 @app.route('/api/health/today')
+@login_required
 def health_today():
     """Get today's health metrics"""
     logger.info("Fetching today's health metrics")
@@ -225,6 +318,7 @@ def health_today():
 
 
 @app.route('/api/health/history')
+@login_required
 def health_history():
     """Get historical health data"""
     logger.info("Fetching health history")
@@ -336,6 +430,7 @@ def _fetch_workouts_from_influx():
 
 
 @app.route('/api/workouts', methods=['GET', 'POST'])
+@login_required
 def workouts():
     """Get or log workouts"""
     if request.method == 'GET':
@@ -391,7 +486,105 @@ def workouts():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/manual-values', methods=['GET', 'POST', 'DELETE'])
+@login_required
+def manual_values():
+    """Get, set, or delete manual override values"""
+    if request.method == 'GET':
+        date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+        
+        if not query_api:
+            return jsonify({})
+        
+        try:
+            query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: -30d)
+              |> filter(fn: (r) => r._measurement == "manual_values")
+              |> filter(fn: (r) => r.date == "{date}")
+              |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+            '''
+            result = query_api.query_data_frame(query)
+            
+            if isinstance(result, list):
+                if len(result) == 0:
+                    return jsonify({})
+                result = pd.concat(result, ignore_index=True)
+            
+            if result.empty:
+                return jsonify({})
+            
+            # Get the latest values for each metric
+            metrics = ['sleep', 'hrv', 'resting_hr', 'steps', 'weight', 'ctl', 'atl', 'tsb']
+            values = {}
+            for metric in metrics:
+                if metric in result.columns:
+                    val = result[metric].dropna()
+                    if len(val) > 0:
+                        values[metric] = float(val.iloc[-1])
+                    else:
+                        values[metric] = None
+                else:
+                    values[metric] = None
+            
+            return jsonify(values)
+        except Exception as e:
+            logger.error(f"Error fetching manual values: {e}")
+            return jsonify({})
+    
+    elif request.method == 'POST':
+        if not write_api:
+            return jsonify({"error": "InfluxDB not configured"}), 500
+        
+        data = request.json
+        metric = data.get('metric')
+        value = data.get('value')
+        date = data.get('date', datetime.now().strftime('%Y-%m-%d'))
+        
+        if not metric or value is None:
+            return jsonify({"error": "Missing metric or value"}), 400
+        
+        try:
+            point = Point("manual_values")\
+                .tag("date", date)\
+                .field(metric, float(value))
+            
+            write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            logger.info(f"Manual value saved: {metric}={value} for {date}")
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.error(f"Error saving manual value: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == 'DELETE':
+        if not write_api:
+            return jsonify({"error": "InfluxDB not configured"}), 500
+        
+        data = request.json
+        metric = data.get('metric')
+        date = data.get('date', datetime.now().strftime('%Y-%m-%d'))
+        
+        if not metric:
+            return jsonify({"error": "Missing metric"}), 400
+        
+        try:
+            # Write a null/sentinel value to indicate deletion
+            # InfluxDB doesn't support true deletion easily, so we use a marker
+            point = Point("manual_values")\
+                .tag("date", date)\
+                .tag("deleted", "true")\
+                .field(metric, 0.0)
+            
+            write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            logger.info(f"Manual value cleared: {metric} for {date}")
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.error(f"Error clearing manual value: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/recommendations/today')
+@login_required
 def recommendations_today():
     """Get today's exercise recommendations"""
     # Use mock data for demo
@@ -400,6 +593,159 @@ def recommendations_today():
     # Use planner to generate recommendation
     rec = planner.get_recommendation(health_data)
     return jsonify(rec)
+
+
+@app.route('/api/calories')
+@login_required
+def calories():
+    """Get calories burned from workouts for today"""
+    date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+    
+    if not query_api:
+        return jsonify({"calories": 0})
+    
+    try:
+        # Query calories from workouts for the specified date
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: -30d)
+          |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
+          |> filter(fn: (r) => r.date == "{date}")
+          |> filter(fn: (r) => r._field == "calories")
+          |> sum()
+        '''
+        result = query_api.query(query)
+        
+        total_calories = 0
+        for table in result:
+            for record in table.records:
+                val = record.get_value()
+                if val:
+                    total_calories += float(val)
+        
+        return jsonify({"calories": int(total_calories), "date": date})
+    except Exception as e:
+        logger.error(f"Error fetching calories: {e}")
+        return jsonify({"calories": 0, "error": str(e)})
+
+
+@app.route('/api/weight', methods=['GET', 'POST'])
+@login_required
+def weight():
+    """Get or set weight"""
+    if request.method == 'GET':
+        date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+        
+        if not query_api:
+            return jsonify({"weight": None})
+        
+        try:
+            # First check manual values
+            query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: -30d)
+              |> filter(fn: (r) => r._measurement == "manual_values")
+              |> filter(fn: (r) => r._field == "weight")
+              |> filter(fn: (r) => r.deleted != "true")
+              |> last()
+            '''
+            result = query_api.query(query)
+            
+            for table in result:
+                for record in table.records:
+                    val = record.get_value()
+                    if val:
+                        return jsonify({"weight": float(val), "source": "manual"})
+            
+            # Fall back to daily_health if available
+            query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: -30d)
+              |> filter(fn: (r) => r._measurement == "daily_health")
+              |> filter(fn: (r) => r._field == "weight")
+              |> last()
+            '''
+            result = query_api.query(query)
+            
+            for table in result:
+                for record in table.records:
+                    val = record.get_value()
+                    if val:
+                        return jsonify({"weight": float(val), "source": "auto"})
+            
+            return jsonify({"weight": None})
+        except Exception as e:
+            logger.error(f"Error fetching weight: {e}")
+            return jsonify({"weight": None, "error": str(e)})
+    
+    elif request.method == 'POST':
+        if not write_api:
+            return jsonify({"error": "InfluxDB not configured"}), 500
+        
+        data = request.json
+        weight_val = data.get('weight')
+        date = data.get('date', datetime.now().strftime('%Y-%m-%d'))
+        
+        if weight_val is None:
+            return jsonify({"error": "Missing weight value"}), 400
+        
+        try:
+            point = Point("manual_values")\
+                .tag("date", date)\
+                .field("weight", float(weight_val))
+            
+            write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            logger.info(f"Weight saved: {weight_val} kg for {date}")
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.error(f"Error saving weight: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/formula/params')
+@login_required
+def formula_params():
+    """Get current formula parameters"""
+    params = load_params()
+    return jsonify(params)
+
+
+@app.route('/api/formula/learn', methods=['POST'])
+@login_required
+def formula_learn():
+    """
+    Trigger a learning cycle to optimize formula parameters
+    based on manually entered CTL/ATL values.
+    """
+    if not query_api:
+        return jsonify({"error": "InfluxDB not configured"}), 500
+    
+    try:
+        # Fetch daily loads from InfluxDB
+        daily_loads = _fetch_daily_loads_from_influx(query_days=365)
+        
+        if not daily_loads:
+            return jsonify({"error": "No training load data available"}), 400
+        
+        # Run learning cycle
+        new_params = run_learning_cycle(query_api, INFLUXDB_BUCKET, daily_loads)
+        
+        # Reload parameters in training_load module
+        reload_params()
+        
+        # Clear PMC cache to use new parameters
+        _pmc_cache["data"] = None
+        _pmc_cache["expires"] = None
+        
+        logger.info(f"Formula learning completed: {new_params}")
+        return jsonify({
+            "success": True,
+            "params": new_params,
+            "message": "Parameters optimized based on manual reference values"
+        })
+    except Exception as e:
+        logger.error(f"Error in formula learning: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/suunto/sync')
@@ -496,6 +842,7 @@ def _fetch_daily_loads_from_influx(query_days=365):
 
 
 @app.route('/api/pmc')
+@login_required
 def pmc():
     """
     Get Performance Management Chart data (CTL, ATL, TSB)

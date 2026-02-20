@@ -15,19 +15,41 @@ import math
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
-# PMC constants - tuned to match Strava's PMC display
+# Try to load learned parameters, fall back to defaults
+try:
+    from formula_learning import load_params
+    _params = load_params()
+except ImportError:
+    _params = {"ctl_days": 42, "atl_days": 7, "load_scale_factor": 1.27}
+
+# PMC constants - can be overridden by learned values
 # Empirically calibrated against multiple reference points from Strava:
 #   12/02: CTL=30, ATL=40 | 01/01: CTL=27, ATL=25 | 01/29: CTL=50, ATL=85
 #   02/18: CTL=46, ATL=40 | Current: CTL=47, ATL=43
-CTL_DAYS = 42  # Chronic Training Load period (τ) - standard
-ATL_DAYS = 7   # Acute Training Load period (τ) - standard
+CTL_DAYS = _params.get("ctl_days", 42)  # Chronic Training Load period (τ)
+ATL_DAYS = _params.get("atl_days", 7)   # Acute Training Load period (τ)
 # EWMA decay: k = 1 - exp(-1/τ)
 CTL_K = 1 - math.exp(-1 / CTL_DAYS)   # ≈ 0.0235
 ATL_K = 1 - math.exp(-1 / ATL_DAYS)   # ≈ 0.133
 
 # Load scaling factor to align with Strava's PMC display
 # Strava's "Relative Effort" (suffer_score) needs ~1.27x scaling for PMC
-LOAD_SCALE_FACTOR = 1.27
+LOAD_SCALE_FACTOR = _params.get("load_scale_factor", 1.27)
+
+
+def reload_params():
+    """Reload parameters from learned values (call after learning cycle)"""
+    global CTL_DAYS, ATL_DAYS, CTL_K, ATL_K, LOAD_SCALE_FACTOR, _params
+    try:
+        from formula_learning import load_params
+        _params = load_params()
+        CTL_DAYS = _params.get("ctl_days", 42)
+        ATL_DAYS = _params.get("atl_days", 7)
+        CTL_K = 1 - math.exp(-1 / CTL_DAYS)
+        ATL_K = 1 - math.exp(-1 / ATL_DAYS)
+        LOAD_SCALE_FACTOR = _params.get("load_scale_factor", 1.27)
+    except ImportError:
+        pass
 
 
 def calculate_intensity_factor(avg_hr: Optional[float], max_hr: Optional[float], 

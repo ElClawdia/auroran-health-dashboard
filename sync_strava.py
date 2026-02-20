@@ -162,6 +162,7 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                     .field("avg_hr", to_float(activity.get("avg_hr")))\
                     .field("max_hr", to_float(activity.get("max_hr")))\
                     .field("suffer_score", to_float(ss))\
+                    .field("calories", to_float(activity.get("calories")))\
                     .field("name", activity.get("name", ""))
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
@@ -177,6 +178,7 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                     .field("elevation_gain", to_float(activity.get("elevation_gain")))\
                     .field("avg_hr", to_float(activity.get("avg_hr")))\
                     .field("max_hr", to_float(activity.get("max_hr")))\
+                    .field("calories", to_float(activity.get("calories")))\
                     .field("suffer_score", to_float(ss))\
                     .field("name", activity.get("name", ""))
                 
