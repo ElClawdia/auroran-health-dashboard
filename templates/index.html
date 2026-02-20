@@ -199,6 +199,70 @@
             display: block;
         }
         
+        /* Date Navigation Bar */
+        .date-nav {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            margin-bottom: 20px;
+            padding: 12px 20px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+        
+        .date-nav-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            padding: 8px 16px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .date-nav-btn:hover:not(:disabled) {
+            background: var(--border);
+            border-color: var(--primary);
+        }
+        
+        .date-nav-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .date-nav-current {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text);
+            min-width: 180px;
+            text-align: center;
+            cursor: pointer;
+            padding: 8px 16px;
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+        
+        .date-nav-current:hover {
+            background: var(--bg);
+        }
+        
+        .date-nav-current.is-today {
+            color: var(--primary);
+        }
+        
+        .date-nav-input {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
         .card.manual-value .card-value::after {
             content: ' ✎';
             font-size: 0.6em;
@@ -562,6 +626,20 @@
         
         <div id="error-container"></div>
         
+        <!-- Date Navigation -->
+        <div class="date-nav">
+            <button class="date-nav-btn" id="date-prev" title="Previous day">
+                <span>◀</span> Previous
+            </button>
+            <div class="date-nav-current is-today" id="date-current" title="Click to select date or go to today">
+                Today
+            </div>
+            <input type="date" class="date-nav-input" id="date-picker-hidden">
+            <button class="date-nav-btn" id="date-next" title="Next day" disabled>
+                Next <span>▶</span>
+            </button>
+        </div>
+        
         <!-- Today's Stats -->
         <div class="grid">
             <div class="card editable-card clickable" data-metric="sleep">
@@ -785,6 +863,110 @@
         const manualValues = {}; // Store manual values locally
         const useManual = {}; // Track which metrics use manual values
         
+        // Current viewing date (default: today)
+        let currentViewDate = new Date().toISOString().split('T')[0];
+        
+        function getTodayDate() {
+            return new Date().toISOString().split('T')[0];
+        }
+        
+        function getYesterdayDate() {
+            const d = new Date();
+            d.setDate(d.getDate() - 1);
+            return d.toISOString().split('T')[0];
+        }
+        
+        function formatDateDisplay(dateStr) {
+            const today = getTodayDate();
+            const yesterday = getYesterdayDate();
+            
+            if (dateStr === today) {
+                return 'Today';
+            } else if (dateStr === yesterday) {
+                return 'Yesterday';
+            } else {
+                const d = new Date(dateStr + 'T00:00:00');
+                return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            }
+        }
+        
+        function updateDateNavigation() {
+            const today = getTodayDate();
+            const isToday = currentViewDate === today;
+            
+            const currentEl = document.getElementById('date-current');
+            const nextBtn = document.getElementById('date-next');
+            const hiddenPicker = document.getElementById('date-picker-hidden');
+            
+            currentEl.textContent = formatDateDisplay(currentViewDate);
+            currentEl.classList.toggle('is-today', isToday);
+            nextBtn.disabled = isToday;
+            hiddenPicker.value = currentViewDate;
+            hiddenPicker.max = today;
+        }
+        
+        function changeDate(offset) {
+            const d = new Date(currentViewDate + 'T00:00:00');
+            d.setDate(d.getDate() + offset);
+            const newDate = d.toISOString().split('T')[0];
+            const today = getTodayDate();
+            
+            // Don't go into the future
+            if (newDate > today) return;
+            
+            currentViewDate = newDate;
+            updateDateNavigation();
+            
+            // Clear manual values for new date and reload
+            Object.keys(useManual).forEach(k => useManual[k] = false);
+            Object.keys(manualValues).forEach(k => delete manualValues[k]);
+            document.querySelectorAll('.manual-value').forEach(el => el.classList.remove('manual-value'));
+            
+            loadManualValues();
+            fetchData();
+        }
+        
+        function initDateNavigation() {
+            const prevBtn = document.getElementById('date-prev');
+            const nextBtn = document.getElementById('date-next');
+            const currentEl = document.getElementById('date-current');
+            const hiddenPicker = document.getElementById('date-picker-hidden');
+            
+            prevBtn.addEventListener('click', () => changeDate(-1));
+            nextBtn.addEventListener('click', () => changeDate(1));
+            
+            // Click on current date: if today, show calendar; otherwise go to today
+            currentEl.addEventListener('click', () => {
+                if (currentViewDate === getTodayDate()) {
+                    hiddenPicker.showPicker();
+                } else {
+                    currentViewDate = getTodayDate();
+                    updateDateNavigation();
+                    Object.keys(useManual).forEach(k => useManual[k] = false);
+                    Object.keys(manualValues).forEach(k => delete manualValues[k]);
+                    document.querySelectorAll('.manual-value').forEach(el => el.classList.remove('manual-value'));
+                    loadManualValues();
+                    fetchData();
+                }
+            });
+            
+            // Hidden date picker change
+            hiddenPicker.addEventListener('change', (e) => {
+                const newDate = e.target.value;
+                if (newDate && newDate !== currentViewDate) {
+                    currentViewDate = newDate;
+                    updateDateNavigation();
+                    Object.keys(useManual).forEach(k => useManual[k] = false);
+                    Object.keys(manualValues).forEach(k => delete manualValues[k]);
+                    document.querySelectorAll('.manual-value').forEach(el => el.classList.remove('manual-value'));
+                    loadManualValues();
+                    fetchData();
+                }
+            });
+            
+            updateDateNavigation();
+        }
+        
         // Check if a metric should use manual value
         function shouldUseManual(metric) {
             return useManual[metric] === true && manualValues[metric] !== null && manualValues[metric] !== undefined;
@@ -792,23 +974,29 @@
         
         async function fetchData() {
             try {
-                // Fetch today's health
-                const healthRes = await fetch('/api/health/today');
+                // Determine calories date (yesterday relative to view date)
+                const viewDate = new Date(currentViewDate + 'T00:00:00');
+                const caloriesDate = new Date(viewDate);
+                caloriesDate.setDate(caloriesDate.getDate() - 1);
+                const caloriesDateStr = caloriesDate.toISOString().split('T')[0];
+                
+                // Fetch health for selected date
+                const healthRes = await fetch('/api/health/today?date=' + currentViewDate);
                 const health = await healthRes.json();
                 updateHealthCards(health);
                 
-                // Fetch history
-                const historyRes = await fetch('/api/health/history?days=30');
+                // Fetch history (30 days ending at selected date)
+                const historyRes = await fetch('/api/health/history?days=30&end_date=' + currentViewDate);
                 const history = await historyRes.json();
                 updateChart(history);
                 
                 // Fetch recommendation
-                const recRes = await fetch('/api/recommendations/today');
+                const recRes = await fetch('/api/recommendations/today?date=' + currentViewDate);
                 const recommendation = await recRes.json();
                 updateRecommendation(recommendation);
                 
-                // Fetch PMC (Training Load)
-                const pmcRes = await fetch('/api/pmc?days=30');
+                // Fetch PMC (Training Load) - 30 days ending at selected date
+                const pmcRes = await fetch('/api/pmc?days=30&end_date=' + currentViewDate);
                 const pmc = await pmcRes.json();
                 updatePMC(pmc);
                 
@@ -816,18 +1004,18 @@
                 const weekPlan = recommendation.alternatives ? generateWeekPlan(recommendation) : [];
                 updateWeekPlan(weekPlan);
                 
-                // Fetch workouts
-                const workoutsRes = await fetch('/api/workouts');
+                // Fetch workouts for selected date
+                const workoutsRes = await fetch('/api/workouts?date=' + currentViewDate);
                 const workouts = await workoutsRes.json();
                 updateWorkouts(workouts);
                 
-                // Fetch calories
-                const caloriesRes = await fetch('/api/calories');
+                // Fetch calories (for day before selected date)
+                const caloriesRes = await fetch('/api/calories?date=' + caloriesDateStr);
                 const caloriesData = await caloriesRes.json();
                 updateCalories(caloriesData);
                 
-                // Fetch weight
-                const weightRes = await fetch('/api/weight');
+                // Fetch weight for selected date
+                const weightRes = await fetch('/api/weight?date=' + currentViewDate);
                 const weightData = await weightRes.json();
                 updateWeight(weightData);
                 
@@ -1355,12 +1543,12 @@
         
         // Manual value editing functionality
         function getDefaultDate(card) {
-            // Returns default date for a card (today or yesterday for calories)
-            const today = new Date();
+            // Returns default date for a card (current view date, or day before for calories)
+            const viewDate = new Date(currentViewDate + 'T00:00:00');
             if (card.dataset.defaultDate === 'yesterday') {
-                today.setDate(today.getDate() - 1);
+                viewDate.setDate(viewDate.getDate() - 1);
             }
-            return today.toISOString().split('T')[0];
+            return viewDate.toISOString().split('T')[0];
         }
         
         function initEditableCards() {
@@ -1512,7 +1700,7 @@
         
         async function loadManualValues() {
             try {
-                const response = await fetch('/api/manual-values?date=' + new Date().toISOString().split('T')[0]);
+                const response = await fetch('/api/manual-values?date=' + currentViewDate);
                 if (response.ok) {
                     const data = await response.json();
                     Object.entries(data).forEach(([metric, value]) => {
@@ -1534,6 +1722,9 @@
         
         // Initialize editable cards
         initEditableCards();
+        
+        // Initialize date navigation
+        initDateNavigation();
         
         // Trend modal functionality
         let trendModalChart = null;

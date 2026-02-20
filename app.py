@@ -402,15 +402,16 @@ def api_user():
 @app.route('/api/health/today')
 @login_required
 def health_today():
-    """Get today's health metrics"""
-    logger.info("Fetching today's health metrics")
+    """Get health metrics for a specific date (default: today)"""
+    target_date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    logger.info(f"Fetching health metrics for {target_date}")
     if not query_api:
         return jsonify({"error": "InfluxDB not configured"}), 500
     
     try:
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -30d)
+          |> range(start: -365d)
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
@@ -423,7 +424,7 @@ def health_today():
         if result.empty:
             return jsonify({"error": "No data from InfluxDB"}), 404
 
-        # Build one row per date and take the latest available date.
+        # Build one row per date
         if "date" not in result.columns:
             return jsonify({"error": "No date field in daily_health data"}), 404
 
@@ -441,38 +442,36 @@ def health_today():
             df = df[["date"]].drop_duplicates()
 
         df = df.sort_values("date")
-        latest = df.iloc[-1]
+        
+        # Try to get data for the target date, fall back to latest
+        target_row = df[df['date'] == target_date]
+        if not target_row.empty:
+            row = target_row.iloc[0]
+        else:
+            row = df.iloc[-1]
 
         def clean_number(val):
             return None if pd.isna(val) else float(val)
 
-        def latest_non_null(col):
-            if col not in df.columns:
+        def get_value(col):
+            if col not in row.index:
                 return None
-            series = df[col].dropna()
-            if series.empty:
-                return None
-            return series.iloc[-1]
+            return clean_number(row[col])
 
-        sleep_val = latest_non_null("sleep_duration_hours")
-        hrv_val = latest_non_null("hrv_avg")
-        resting_hr_val = latest_non_null("resting_hr")
-        recovery_val = latest_non_null("recovery_score")
-        training_load_val = latest_non_null("training_load")
-        steps_val = latest_non_null("steps")
+        steps_val = get_value("steps")
         steps_clean = None if steps_val is None else int(float(steps_val))
 
         return jsonify({
-            "date": latest.get("date", datetime.now().strftime("%Y-%m-%d")),
-            "sleep_hours": clean_number(sleep_val),
-            "hrv": clean_number(hrv_val),
-            "resting_hr": clean_number(resting_hr_val),
+            "date": row.get("date", target_date),
+            "sleep_hours": get_value("sleep_duration_hours"),
+            "hrv": get_value("hrv_avg"),
+            "resting_hr": get_value("resting_hr"),
             "steps": steps_clean,
-            "recovery_score": clean_number(recovery_val),
-            "training_load": clean_number(training_load_val)
+            "recovery_score": get_value("recovery_score"),
+            "training_load": get_value("training_load")
         })
     except Exception as e:
-        logger.error(f"Error fetching today's health: {e}")
+        logger.error(f"Error fetching health for {target_date}: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -480,8 +479,9 @@ def health_today():
 @login_required
 def health_history():
     """Get historical health data"""
-    logger.info("Fetching health history")
     days = request.args.get('days', 30, type=int)
+    end_date = request.args.get('end_date', datetime.now().strftime("%Y-%m-%d"))
+    logger.info(f"Fetching health history: {days} days ending {end_date}")
     
     if not query_api:
         # Return mock data for demo
@@ -489,9 +489,13 @@ def health_history():
         return jsonify({"error": "No data from InfluxDB"}), 404
     
     try:
+        # Calculate start date based on end_date and days
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        start_dt = end_dt - timedelta(days=days + 30)  # Extra buffer for data availability
+        
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{days}d)
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {(end_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
@@ -619,26 +623,33 @@ def _fetch_workouts_from_influx():
 def workouts():
     """Get or log workouts"""
     if request.method == 'GET':
+        filter_date = request.args.get('date')  # Optional date filter
+        
         if not query_api:
             logger.info("Using mock workouts (no InfluxDB)")
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
-            # Check cache first
+            # Check cache first (only if no date filter)
             now = datetime.now()
-            if _workout_cache["data"] and _workout_cache["expires"] and now < _workout_cache["expires"]:
+            if not filter_date and _workout_cache["data"] and _workout_cache["expires"] and now < _workout_cache["expires"]:
                 logger.info("Returning cached workouts")
                 return jsonify(_workout_cache["data"])
             
-            logger.info("Fetching workouts from InfluxDB")
+            logger.info(f"Fetching workouts from InfluxDB (date filter: {filter_date})")
             records = _fetch_workouts_from_influx()
             
             if not records:
                 return jsonify({"error": "No workouts from InfluxDB"}), 404
             
-            # Update cache
-            _workout_cache["data"] = records
-            _workout_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
+            # Update cache (only if no date filter)
+            if not filter_date:
+                _workout_cache["data"] = records
+                _workout_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
+            
+            # Filter by date if specified
+            if filter_date:
+                records = [w for w in records if w.get('date') == filter_date]
             
             return jsonify(records)
         except Exception as e:
@@ -830,10 +841,28 @@ def weight():
             return jsonify({"weight": None})
         
         try:
-            # First check manual values
+            # First check manual values for the specific date
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -30d)
+              |> range(start: -365d)
+              |> filter(fn: (r) => r._measurement == "manual_values")
+              |> filter(fn: (r) => r._field == "weight")
+              |> filter(fn: (r) => r.date == "{date}")
+              |> filter(fn: (r) => r.deleted != "true")
+              |> last()
+            '''
+            result = query_api.query(query)
+            
+            for table in result:
+                for record in table.records:
+                    val = record.get_value()
+                    if val:
+                        return jsonify({"weight": float(val), "source": "manual", "date": date})
+            
+            # Fall back to most recent manual weight (any date)
+            query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: -365d)
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r._field == "weight")
               |> filter(fn: (r) => r.deleted != "true")
@@ -850,7 +879,7 @@ def weight():
             # Fall back to daily_health if available
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -30d)
+              |> range(start: -365d)
               |> filter(fn: (r) => r._measurement == "daily_health")
               |> filter(fn: (r) => r._field == "weight")
               |> last()
@@ -1039,11 +1068,20 @@ def pmc():
     This calculates fitness, strain, and form from training load
     """
     days = request.args.get('days', 90, type=int)
+    end_date_str = request.args.get('end_date', datetime.now().strftime("%Y-%m-%d"))
     query_days = max(days + 42, 365)  # Full year for stable CTL/ATL
     
-    # Check cache first
+    # Parse end_date
+    try:
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        end_date = datetime.now().date()
+    
+    is_today = end_date == datetime.now().date()
+    
+    # Check cache first (only use cache if querying for today)
     now = datetime.now()
-    if _pmc_cache["data"] and _pmc_cache["expires"] and now < _pmc_cache["expires"]:
+    if is_today and _pmc_cache["data"] and _pmc_cache["expires"] and now < _pmc_cache["expires"]:
         logger.info("Returning cached PMC data")
         cached = _pmc_cache["data"]
         # Return cached data but slice to requested days
@@ -1079,7 +1117,6 @@ def pmc():
     # Build continuous daily load series (fill missing days with zero load),
     # then compute CTL/ATL/TSB series for charting.
     loads_map = {d["date"]: float(d.get("load", 0.0)) for d in daily_loads}
-    end_date = datetime.now().date()
     start_date = end_date - timedelta(days=query_days - 1)
 
     full_series = []
@@ -1091,9 +1128,10 @@ def pmc():
 
     pmc_series = calculate_pmc_series(full_series)
     
-    # Update cache
-    _pmc_cache["data"] = {"pmc_series": pmc_series}
-    _pmc_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
+    # Update cache only if querying for today
+    if is_today:
+        _pmc_cache["data"] = {"pmc_series": pmc_series}
+        _pmc_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
 
     pmc_recent = pmc_series[-days:]
     latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
