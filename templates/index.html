@@ -603,9 +603,14 @@
                 <input type="number" step="0.1" class="card-input" id="weight-input" placeholder="kg">
                 <div class="card-trend" id="weight-trend"></div>
             </div>
-            <div class="card">
+            <div class="card editable-card clickable" data-metric="calories">
+                <div class="card-actions">
+                    <button class="card-action-btn edit-btn" title="Edit value">✎</button>
+                </div>
+                <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">🔥 Calories Burned (Yesterday)</div>
                 <div class="card-value" id="calories-value">--</div>
+                <input type="number" step="1" class="card-input" id="calories-input" placeholder="kcal">
                 <div class="card-trend" id="calories-trend" style="color: var(--text-dim);">From workouts</div>
             </div>
         </div>
@@ -813,6 +818,11 @@
         }
         
         function updateCalories(data) {
+            // Only update if no manual value is set locally
+            if (shouldUseManual('calories')) {
+                return; // Keep the manual value
+            }
+            
             const el = document.getElementById('calories-value');
             const trendEl = document.getElementById('calories-trend');
             if (el && data.calories) {
@@ -1394,6 +1404,7 @@
                 resting_hr: v => Math.round(v) + ' bpm',
                 steps: v => Math.round(v).toLocaleString(),
                 weight: v => v.toFixed(1) + ' kg',
+                calories: v => Math.round(v).toLocaleString() + ' kcal',
                 ctl: v => v.toFixed(1),
                 atl: v => v.toFixed(1),
                 tsb: v => (v >= 0 ? '+' : '') + v.toFixed(1)
@@ -1405,6 +1416,7 @@
                 resting_hr: 'rhr-value',
                 steps: 'steps-value',
                 weight: 'weight-value',
+                calories: 'calories-value',
                 ctl: 'ctl-value',
                 atl: 'atl-value',
                 tsb: 'tsb-value'
@@ -1488,6 +1500,7 @@
             resting_hr: { label: 'Resting HR', unit: 'bpm', color: '#f85149', icon: '🫀', field: 'resting_hr' },
             steps: { label: 'Steps', unit: '', color: '#a371f7', icon: '👟', field: 'steps' },
             weight: { label: 'Weight', unit: 'kg', color: '#f0883e', icon: '⚖️', field: 'weight' },
+            calories: { label: 'Calories Burned', unit: 'kcal', color: '#ef4444', icon: '🔥', field: 'calories' },
             ctl: { label: 'CTL (Fitness)', unit: '', color: '#58a6ff', icon: '💪', field: 'ctl' },
             atl: { label: 'ATL (Strain)', unit: '', color: '#d29922', icon: '🔥', field: 'atl' },
             tsb: { label: 'TSB (Form)', unit: '', color: '#3fb950', icon: '⚖️', field: 'tsb' }

@@ -616,7 +616,7 @@ def manual_values():
                 return jsonify({})
             
             # Get the latest values for each metric
-            metrics = ['sleep', 'hrv', 'resting_hr', 'steps', 'weight', 'ctl', 'atl', 'tsb']
+            metrics = ['sleep', 'hrv', 'resting_hr', 'steps', 'weight', 'calories', 'ctl', 'atl', 'tsb']
             values = {}
             for metric in metrics:
                 if metric in result.columns:
