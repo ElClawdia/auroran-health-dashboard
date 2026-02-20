@@ -617,9 +617,6 @@
                 <div id="last-updated" style="color: var(--text-dim); font-size: 0.85rem;">
                     Loading...
                 </div>
-                <button id="refresh-btn" title="Refresh data (clears cache)" style="background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 6px 12px; cursor: pointer; font-size: 0.85rem;">
-                    🔄 Refresh
-                </button>
                 <a href="/account" class="account-link" title="Account Settings">
                     <span style="font-size: 1.2rem;">👤</span>
                     <span>{{ user.full_name if user else 'Account' }}</span>
@@ -1728,32 +1725,6 @@
         
         // Initialize date navigation
         initDateNavigation();
-        
-        // Refresh button - clears server cache and reloads data
-        document.getElementById('refresh-btn').addEventListener('click', async () => {
-            const btn = document.getElementById('refresh-btn');
-            btn.disabled = true;
-            btn.textContent = '⏳ Refreshing...';
-            
-            try {
-                // Clear server-side cache
-                await fetch('/api/cache/clear', { method: 'POST' });
-                
-                // Reload data
-                await loadManualValues();
-                await fetchData();
-                
-                btn.textContent = '✓ Refreshed!';
-                setTimeout(() => {
-                    btn.textContent = '🔄 Refresh';
-                    btn.disabled = false;
-                }, 1500);
-            } catch (error) {
-                console.error('Refresh failed:', error);
-                btn.textContent = '🔄 Refresh';
-                btn.disabled = false;
-            }
-        });
         
         // Trend modal functionality
         let trendModalChart = null;

@@ -112,7 +112,7 @@ planner = ExercisePlanner()
 # Simple in-memory cache for workouts and PMC data
 _workout_cache = {"data": None, "expires": None}
 _pmc_cache = {"data": None, "expires": None}
-CACHE_TTL_SECONDS = 60  # 1 minute - balance between freshness and performance
+CACHE_TTL_SECONDS = 30  # 30 seconds - quick refresh after syncing
 
 # Generate mock data for demo mode
 def get_mock_health_today():
