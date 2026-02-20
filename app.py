@@ -204,6 +204,59 @@ def logout():
     return redirect(url_for('login_page'))
 
 
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    """Forgot password - send reset link to email"""
+    if request.method == 'POST':
+        data = request.get_json() if request.is_json else request.form
+        email = data.get('email', '').strip().lower()
+        
+        if not email:
+            return jsonify({"error": "Email is required"}), 400
+        
+        # Find user by email
+        from auth import load_users
+        users = load_users()
+        username = None
+        user = None
+        for uname, udata in users.items():
+            if udata.get('email', '').lower() == email:
+                username = uname
+                user = udata
+                break
+        
+        if not user:
+            # Don't reveal if email exists or not for security
+            return jsonify({
+                "success": True,
+                "message": "If an account with that email exists, a password reset link has been sent."
+            })
+        
+        # Generate reset token and send email
+        token = generate_reset_token(username)
+        reset_link = url_for('set_new_password', token=token, _external=True)
+        
+        email_sent = send_password_reset_email(
+            to_email=user['email'],
+            username=user['full_name'],
+            reset_link=reset_link
+        )
+        
+        if email_sent:
+            return jsonify({
+                "success": True,
+                "message": "If an account with that email exists, a password reset link has been sent."
+            })
+        else:
+            return jsonify({
+                "success": True,
+                "message": "If an account with that email exists, a password reset link has been sent.",
+                "verification_link": reset_link
+            })
+    
+    return render_template('forgot_password.html')
+
+
 @app.route('/register')
 def register_page():
     """Registration page (currently disabled)"""

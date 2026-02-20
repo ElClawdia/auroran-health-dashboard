@@ -183,6 +183,22 @@
             display: block;
         }
         
+        .card-date-picker {
+            display: none;
+            font-size: 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            padding: 4px 8px;
+            margin-bottom: 6px;
+            cursor: pointer;
+        }
+        
+        .card-date-picker.editing {
+            display: block;
+        }
+        
         .card.manual-value .card-value::after {
             content: ' ✎';
             font-size: 0.6em;
@@ -555,6 +571,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">💤 Sleep</div>
                 <div class="card-value" id="sleep-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="0.1" class="card-input" id="sleep-input" placeholder="Hours">
                 <div class="card-trend" id="sleep-trend"></div>
             </div>
@@ -565,6 +582,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">❤️ HRV</div>
                 <div class="card-value" id="hrv-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="1" class="card-input" id="hrv-input" placeholder="ms">
                 <div class="card-trend" id="hrv-trend"></div>
             </div>
@@ -575,6 +593,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">🫀 Resting HR</div>
                 <div class="card-value" id="rhr-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="1" class="card-input" id="rhr-input" placeholder="bpm">
                 <div class="card-trend" id="rhr-trend"></div>
             </div>
@@ -585,6 +604,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">👟 Steps</div>
                 <div class="card-value" id="steps-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="100" class="card-input" id="steps-input" placeholder="Steps">
                 <div class="card-trend" id="steps-trend"></div>
             </div>
@@ -600,18 +620,20 @@
                 <button class="card-action-btn hide-btn" title="Hide/Show value">👁</button>
                 <div class="card-label">⚖️ Weight</div>
                 <div class="card-value" id="weight-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="0.1" class="card-input" id="weight-input" placeholder="kg">
                 <div class="card-trend" id="weight-trend"></div>
             </div>
-            <div class="card editable-card clickable" data-metric="calories">
+            <div class="card editable-card clickable" data-metric="calories" data-default-date="yesterday">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
-                <div class="card-label">🔥 Calories Burned (Yesterday)</div>
+                <div class="card-label">🔥 Calories Burned</div>
                 <div class="card-value" id="calories-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="1" class="card-input" id="calories-input" placeholder="kcal">
-                <div class="card-trend" id="calories-trend" style="color: var(--text-dim);">From workouts</div>
+                <div class="card-trend" id="calories-trend" style="color: var(--text-dim);"></div>
             </div>
         </div>
         
@@ -624,6 +646,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">💪 CTL (Fitness)</div>
                 <div class="card-value" id="ctl-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="0.1" class="card-input" id="ctl-input" placeholder="CTL">
                 <div class="card-trend" style="color: var(--text-dim);">42-day avg</div>
             </div>
@@ -634,6 +657,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">🔥 ATL (Strain)</div>
                 <div class="card-value" id="atl-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="0.1" class="card-input" id="atl-input" placeholder="ATL">
                 <div class="card-trend" style="color: var(--text-dim);">7-day avg</div>
             </div>
@@ -644,6 +668,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">⚖️ TSB (Form)</div>
                 <div class="card-value" id="tsb-value">--</div>
+                <input type="date" class="card-date-picker">
                 <input type="number" step="0.1" class="card-input" id="tsb-input" placeholder="TSB">
                 <div class="card-trend" id="tsb-status">Loading...</div>
             </div>
@@ -831,7 +856,7 @@
                 el.textContent = '--';
             }
             if (trendEl && data.date) {
-                trendEl.textContent = data.date + ' workouts';
+                trendEl.textContent = data.date;
             }
         }
         
@@ -1329,6 +1354,15 @@
         }
         
         // Manual value editing functionality
+        function getDefaultDate(card) {
+            // Returns default date for a card (today or yesterday for calories)
+            const today = new Date();
+            if (card.dataset.defaultDate === 'yesterday') {
+                today.setDate(today.getDate() - 1);
+            }
+            return today.toISOString().split('T')[0];
+        }
+        
         function initEditableCards() {
             document.querySelectorAll('.editable-card').forEach(card => {
                 const metric = card.dataset.metric;
@@ -1336,6 +1370,7 @@
                 const refreshBtn = card.querySelector('.refresh-btn');
                 const valueEl = card.querySelector('.card-value');
                 const inputEl = card.querySelector('.card-input');
+                const dateEl = card.querySelector('.card-date-picker');
                 
                 if (!editBtn || !inputEl) return;
                 
@@ -1346,18 +1381,24 @@
                     if (isEditing) {
                         // Save the value
                         const newValue = parseFloat(inputEl.value);
+                        const selectedDate = dateEl ? dateEl.value : getDefaultDate(card);
                         if (!isNaN(newValue)) {
-                            saveManualValue(metric, newValue);
+                            saveManualValue(metric, newValue, selectedDate);
                             useManual[metric] = true;
                             card.classList.add('manual-value');
                             updateDisplayValue(metric, newValue);
                         }
                         inputEl.classList.remove('editing');
                         valueEl.classList.remove('editing');
+                        if (dateEl) dateEl.classList.remove('editing');
                         editBtn.textContent = '✎';
                         editBtn.title = 'Edit value';
                     } else {
-                        // Start editing
+                        // Start editing - set default date
+                        if (dateEl) {
+                            dateEl.value = getDefaultDate(card);
+                            dateEl.classList.add('editing');
+                        }
                         const currentValue = extractNumericValue(valueEl.textContent);
                         inputEl.value = currentValue || '';
                         inputEl.classList.add('editing');
@@ -1376,6 +1417,7 @@
                     } else if (e.key === 'Escape') {
                         inputEl.classList.remove('editing');
                         valueEl.classList.remove('editing');
+                        if (dateEl) dateEl.classList.remove('editing');
                         editBtn.textContent = '✎';
                         editBtn.title = 'Edit value';
                         editBtn.classList.remove('active');
@@ -1428,15 +1470,16 @@
             }
         }
         
-        async function saveManualValue(metric, value) {
+        async function saveManualValue(metric, value, date = null) {
             try {
+                const saveDate = date || new Date().toISOString().split('T')[0];
                 const response = await fetch('/api/manual-values', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         metric: metric,
                         value: value,
-                        date: new Date().toISOString().split('T')[0]
+                        date: saveDate
                     })
                 });
                 
