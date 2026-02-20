@@ -114,6 +114,12 @@ _workout_cache = {"data": None, "expires": None}
 _pmc_cache = {"data": None, "expires": None}
 CACHE_TTL_SECONDS = 30  # 30 seconds - quick refresh after syncing
 
+# Dashboard lookback windows (keep small for speed)
+WORKOUT_LOOKBACK_DAYS = 90
+HEALTH_LOOKBACK_DAYS = 90
+PMC_MIN_LOOKBACK_DAYS = 120
+WEIGHT_LOOKBACK_DAYS = 180
+
 # Generate mock data for demo mode
 def get_mock_health_today():
     """Return realistic mock data for demo"""
@@ -420,9 +426,12 @@ def health_today():
         return jsonify({"error": "InfluxDB not configured"}), 500
     
     try:
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+        start_dt = target_dt - timedelta(days=7)
+        stop_dt = target_dt + timedelta(days=1)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -365d)
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
@@ -502,7 +511,7 @@ def health_history():
     try:
         # Calculate start date based on end_date and days
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        start_dt = end_dt - timedelta(days=days + 30)  # Extra buffer for data availability
+        start_dt = end_dt - timedelta(days=days + 7)  # Small buffer for data availability
         
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
@@ -593,14 +602,14 @@ def _fetch_workouts_from_influx():
     """Fetch workouts from InfluxDB with manual pivot (faster than Flux pivot)"""
     from collections import defaultdict
     
-    cutoff = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+    cutoff = (datetime.now() - timedelta(days=WORKOUT_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
     
     # Try workout_cache first (optimized, fewer records)
     # Fall back to workouts measurement if cache doesn't exist
     for measurement in ["workout_cache", "workouts"]:
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -365d)
+          |> range(start: -{WORKOUT_LOOKBACK_DAYS}d)
           |> filter(fn: (r) => r._measurement == "{measurement}")
           |> filter(fn: (r) => r.date >= "{cutoff}")
         '''
@@ -852,10 +861,13 @@ def weight():
             return jsonify({"weight": None})
         
         try:
+            target_dt = datetime.strptime(date, "%Y-%m-%d")
+            start_dt = target_dt - timedelta(days=7)
+            stop_dt = target_dt + timedelta(days=1)
             # First check manual values for the specific date
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -365d)
+              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r._field == "weight")
               |> filter(fn: (r) => r.date == "{date}")
@@ -873,7 +885,7 @@ def weight():
             # Fall back to most recent manual weight (any date)
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -365d)
+              |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r._field == "weight")
               |> filter(fn: (r) => r.deleted != "true")
@@ -890,7 +902,7 @@ def weight():
             # Fall back to daily_health if available
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -365d)
+              |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
               |> filter(fn: (r) => r._measurement == "daily_health")
               |> filter(fn: (r) => r._field == "weight")
               |> last()
@@ -1080,7 +1092,7 @@ def pmc():
     """
     days = request.args.get('days', 90, type=int)
     end_date_str = request.args.get('end_date', datetime.now().strftime("%Y-%m-%d"))
-    query_days = max(days + 42, 365)  # Full year for stable CTL/ATL
+    query_days = max(days + 42, PMC_MIN_LOOKBACK_DAYS)  # Smaller window for speed
     
     # Parse end_date
     try:
