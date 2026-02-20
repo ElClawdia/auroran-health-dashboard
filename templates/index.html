@@ -1551,6 +1551,20 @@
             return viewDate.toISOString().split('T')[0];
         }
         
+        function setAutoPreviewState(card, editBtn, enabled) {
+            if (enabled) {
+                card.dataset.autoPreview = 'true';
+                editBtn.textContent = '✓';
+                editBtn.title = 'Use automated value';
+                editBtn.classList.add('active');
+            } else {
+                delete card.dataset.autoPreview;
+                editBtn.textContent = '✎';
+                editBtn.title = 'Edit value';
+                editBtn.classList.remove('active');
+            }
+        }
+        
         function initEditableCards() {
             document.querySelectorAll('.editable-card').forEach(card => {
                 const metric = card.dataset.metric;
@@ -1564,7 +1578,18 @@
                 
                 // Edit button click
                 editBtn.addEventListener('click', () => {
+                    const isAutoPreview = card.dataset.autoPreview === 'true';
                     const isEditing = inputEl.classList.contains('editing');
+                    
+                    if (isAutoPreview && !isEditing) {
+                        // Commit to automated value (clear manual override)
+                        clearManualValue(metric);
+                        useManual[metric] = false;
+                        card.classList.remove('manual-value');
+                        setAutoPreviewState(card, editBtn, false);
+                        fetchData();
+                        return;
+                    }
                     
                     if (isEditing) {
                         // Save the value
@@ -1579,10 +1604,10 @@
                         inputEl.classList.remove('editing');
                         valueEl.classList.remove('editing');
                         if (dateEl) dateEl.classList.remove('editing');
-                        editBtn.textContent = '✎';
-                        editBtn.title = 'Edit value';
+                        setAutoPreviewState(card, editBtn, false);
                     } else {
                         // Start editing - set default date
+                        setAutoPreviewState(card, editBtn, false);
                         if (dateEl) {
                             dateEl.value = getDefaultDate(card);
                             dateEl.classList.add('editing');
@@ -1614,9 +1639,10 @@
                 
                 // Refresh button click - use automated value
                 refreshBtn.addEventListener('click', () => {
+                    // Preview automated value without deleting manual override
                     useManual[metric] = false;
                     card.classList.remove('manual-value');
-                    clearManualValue(metric);
+                    setAutoPreviewState(card, editBtn, true);
                     fetchData(); // Refresh to get automated value
                 });
             });
@@ -1710,6 +1736,10 @@
                             const card = document.querySelector(`.editable-card[data-metric="${metric}"]`);
                             if (card) {
                                 card.classList.add('manual-value');
+                                const editBtn = card.querySelector('.edit-btn');
+                                if (editBtn) {
+                                    setAutoPreviewState(card, editBtn, false);
+                                }
                             }
                             updateDisplayValue(metric, value);
                         }

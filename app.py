@@ -714,9 +714,12 @@ def manual_values():
         
         try:
             # Query latest manual values per metric (respect deleted markers)
+            target_dt = datetime.strptime(date, "%Y-%m-%d")
+            start_dt = target_dt - timedelta(days=7)
+            stop_dt = target_dt + timedelta(days=1)
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -30d)
+              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r.date == "{date}")
               |> group(columns: ["_field"])
