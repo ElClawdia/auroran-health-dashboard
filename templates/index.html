@@ -1004,8 +1004,8 @@
                 const weekPlan = recommendation.alternatives ? generateWeekPlan(recommendation) : [];
                 updateWeekPlan(weekPlan);
                 
-                // Fetch workouts for selected date
-                const workoutsRes = await fetch('/api/workouts?date=' + currentViewDate);
+                // Fetch recent workouts (not filtered by date - shows all recent workouts)
+                const workoutsRes = await fetch('/api/workouts');
                 const workouts = await workoutsRes.json();
                 updateWorkouts(workouts);
                 
