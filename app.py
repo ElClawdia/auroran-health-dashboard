@@ -399,6 +399,17 @@ def api_user():
     return jsonify({"error": "Not logged in"}), 401
 
 
+@app.route('/api/cache/clear', methods=['POST'])
+@login_required
+def clear_cache():
+    """Clear all in-memory caches to force fresh data fetch"""
+    global _workout_cache, _pmc_cache
+    _workout_cache = {"data": None, "expires": None}
+    _pmc_cache = {"data": None, "expires": None}
+    logger.info("Cache cleared by user")
+    return jsonify({"success": True, "message": "Cache cleared"})
+
+
 @app.route('/api/health/today')
 @login_required
 def health_today():
