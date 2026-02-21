@@ -1663,7 +1663,12 @@
         
         function parseSleepValue(text) {
             if (!text) return null;
-            // Handle hh:mm format (e.g., "7h 30m" or "7:30")
+            // Handle H:MM format without h (e.g., "4:41", "7:30")
+            const colonMatch = text.match(/^(\d{1,2}):(\d{2})$/);
+            if (colonMatch) {
+                return parseInt(colonMatch[1]) + parseInt(colonMatch[2]) / 60;
+            }
+            // Handle hh:mm format with h (e.g., "7h 30m", "7:30m", "7 h 30 m")
             const hmMatch = text.match(/(\d+)\s*h\s*[.:]\s*(\d+)\s*m?/);
             if (hmMatch) {
                 return parseInt(hmMatch[1]) + parseInt(hmMatch[2]) / 60;
