@@ -1075,10 +1075,17 @@
             }
         }
         
+        function formatHours(hours) {
+            if (!hours) return '--';
+            const h = Math.floor(hours);
+            const m = Math.round((hours - h) * 60);
+            return h + 'h ' + m + 'm';
+        }
+
         function updateHealthCards(data) {
             // Only update if no manual value is set
             if (!shouldUseManual('sleep')) {
-                document.getElementById('sleep-value').textContent = data.sleep_hours ? data.sleep_hours.toFixed(1) + 'h' : '--';
+                document.getElementById('sleep-value').textContent = formatHours(data.sleep_hours);
             }
             if (!shouldUseManual('hrv')) {
                 document.getElementById('hrv-value').textContent = data.hrv ? data.hrv + ' ms' : '--';
