@@ -899,7 +899,7 @@ def weight():
                 for record in table.records:
                     val = record.get_value()
                     if val:
-                        return jsonify({"weight": float(val), "source": "manual"})
+                        return jsonify({"weight": float(val), "source": "manual", "date": date})
             
             # Fall back to daily_health if available
             query = f'''
@@ -915,9 +915,9 @@ def weight():
                 for record in table.records:
                     val = record.get_value()
                     if val:
-                        return jsonify({"weight": float(val), "source": "auto"})
+                        return jsonify({"weight": float(val), "source": "auto", "date": date})
             
-            return jsonify({"weight": None})
+            return jsonify({"weight": None, "date": date})
         except Exception as e:
             logger.error(f"Error fetching weight: {e}")
             return jsonify({"weight": None, "error": str(e)})

@@ -1016,7 +1016,6 @@
                 updateWorkouts(workouts);
                 
                 // Fetch calories for selected date (add timestamp to prevent caching)
-                console.log('Fetching calories for date:', caloriesDateStr, 'currentViewDate:', currentViewDate);
                 const caloriesRes = await fetch('/api/calories?date=' + caloriesDateStr + '&_t=' + Date.now());
                 const caloriesData = await caloriesRes.json();
                 updateCalories(caloriesData);
@@ -1038,6 +1037,11 @@
         }
         
         function updateCalories(data) {
+            // Ignore stale responses from previous date selections
+            if (data.date && data.date !== currentViewDate) {
+                return;
+            }
+            
             // Only update if no manual value is set locally
             if (shouldUseManual('calories')) {
                 return; // Keep the manual value
@@ -1056,6 +1060,11 @@
         }
         
         function updateWeight(data) {
+            // Ignore stale responses from previous date selections
+            if (data.date && data.date !== currentViewDate) {
+                return;
+            }
+            
             // Only update if no manual value is set locally
             if (shouldUseManual('weight')) {
                 return; // Keep the manual value
