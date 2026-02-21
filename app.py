@@ -762,9 +762,12 @@ def manual_values():
             return jsonify({"error": "Missing metric or value"}), 400
         
         try:
+            # Parse the target date and set timestamp to noon of that day
+            target_dt = datetime.strptime(date, "%Y-%m-%d").replace(hour=12, minute=0, second=0)
             point = Point("manual_values")\
                 .tag("date", date)\
-                .field(metric, float(value))
+                .field(metric, float(value))\
+                .time(target_dt)
             
             write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
             logger.info(f"Manual value saved: {metric}={value} for {date}")
@@ -787,10 +790,13 @@ def manual_values():
         try:
             # Write a null/sentinel value to indicate deletion
             # InfluxDB doesn't support true deletion easily, so we use a marker
+            # Parse the target date and set timestamp to noon of that day
+            target_dt = datetime.strptime(date, "%Y-%m-%d").replace(hour=12, minute=0, second=0)
             point = Point("manual_values")\
                 .tag("date", date)\
                 .tag("deleted", "true")\
-                .field(metric, 0.0)
+                .field(metric, 0.0)\
+                .time(target_dt)
             
             write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
             logger.info(f"Manual value cleared: {metric} for {date}")
