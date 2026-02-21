@@ -650,7 +650,7 @@
                 <div class="card-label">💤 Sleep</div>
                 <div class="card-value" id="sleep-value">--</div>
                 <input type="date" class="card-date-picker">
-                <input type="number" step="0.1" class="card-input" id="sleep-input" placeholder="Hours">
+                <input type="text" class="card-input" id="sleep-input" placeholder="7h 30m or 7.5">
                 <div class="card-trend" id="sleep-trend"></div>
             </div>
             <div class="card editable-card clickable" data-metric="hrv">
@@ -1661,14 +1661,38 @@
             });
         }
         
+        function parseSleepValue(text) {
+            if (!text) return null;
+            // Handle hh:mm format (e.g., "7h 30m" or "7:30")
+            const hmMatch = text.match(/(\d+)\s*h\s*[.:]\s*(\d+)\s*m?/);
+            if (hmMatch) {
+                return parseInt(hmMatch[1]) + parseInt(hmMatch[2]) / 60;
+            }
+            // Handle just hours with h (e.g., "7.5h" or "7h")
+            const hMatch = text.match(/(\d+\.?\d*)\s*h?/);
+            return hMatch ? parseFloat(hMatch[1]) : null;
+        }
+
+        function formatSleepValue(hours) {
+            if (!hours) return '--';
+            const h = Math.floor(hours);
+            const m = Math.round((hours - h) * 60);
+            return h + 'h ' + m + 'm';
+        }
+
         function extractNumericValue(text) {
+            if (!text) return null;
+            // For sleep, try to parse hh:mm format
+            if (text.includes('h') || text.includes(':')) {
+                return parseSleepValue(text);
+            }
             const match = text.match(/[\d.]+/);
             return match ? parseFloat(match[0]) : null;
         }
-        
+
         function updateDisplayValue(metric, value) {
             const formatters = {
-                sleep: v => v.toFixed(1) + 'h',
+                sleep: v => formatSleepValue(v),
                 hrv: v => Math.round(v) + ' ms',
                 resting_hr: v => Math.round(v) + ' bpm',
                 steps: v => Math.round(v).toLocaleString(),
