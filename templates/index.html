@@ -1015,13 +1015,13 @@
                 const workouts = await workoutsRes.json();
                 updateWorkouts(workouts);
                 
-                // Fetch calories for selected date
-                const caloriesRes = await fetch('/api/calories?date=' + caloriesDateStr);
+                // Fetch calories for selected date (add timestamp to prevent caching)
+                const caloriesRes = await fetch('/api/calories?date=' + caloriesDateStr + '&_t=' + Date.now());
                 const caloriesData = await caloriesRes.json();
                 updateCalories(caloriesData);
                 
                 // Fetch weight for selected date
-                const weightRes = await fetch('/api/weight?date=' + currentViewDate);
+                const weightRes = await fetch('/api/weight?date=' + currentViewDate + '&_t=' + Date.now());
                 const weightData = await weightRes.json();
                 updateWeight(weightData);
                 
