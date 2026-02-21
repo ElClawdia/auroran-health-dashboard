@@ -1042,20 +1042,23 @@
                 return;
             }
             
-            // Only update if no manual value is set locally
-            if (shouldUseManual('calories')) {
-                return; // Keep the manual value
-            }
-            
             const el = document.getElementById('calories-value');
             const trendEl = document.getElementById('calories-trend');
+            
+            // Always update the date display to match current view
+            if (trendEl) {
+                trendEl.textContent = currentViewDate;
+            }
+            
+            // Only update value if no manual value is set locally
+            if (shouldUseManual('calories')) {
+                return; // Keep the manual calorie value
+            }
+            
             if (el && data.calories) {
                 el.textContent = data.calories.toLocaleString() + ' kcal';
             } else if (el) {
                 el.textContent = '--';
-            }
-            if (trendEl && data.date) {
-                trendEl.textContent = data.date;
             }
         }
         
