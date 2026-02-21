@@ -521,77 +521,87 @@ def health_history():
         '''
         result = query_api.query_data_frame(query)
 
+        # Generate date range for the requested period
+        dates_list = [(end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days-1, -1, -1)]
+        
+        # Check if we have daily_health data
+        has_daily_health = False
         if isinstance(result, list):
-            if len(result) == 0:
-                return jsonify({"error": "No data from InfluxDB"}), 404
-            result = pd.concat(result, ignore_index=True)
+            if len(result) > 0:
+                result = pd.concat(result, ignore_index=True)
+                has_daily_health = not result.empty
+        elif not result.empty:
+            has_daily_health = True
         
-        if result.empty or len(result) == 0:
-            # Return mock trend data
-            return jsonify({"error": "No data from InfluxDB"}), 404
-            return jsonify({
-                "dates": dates,
-                "hrv": [30 + i + (i % 7) for i in range(days)],
-                "resting_hr": [65 - i//3 for i in range(days)],
-                "sleep": [7 + (i % 5) * 0.2 for i in range(days)],
-                "recovery": [60 + i + (i % 10) for i in range(days)]
-            })
-        
-        # Process actual data.
-        # Ensure exactly one row per date and a strict trailing window (e.g. 30 days).
-        df = result.copy()
-        if "date" not in df.columns:
-            return jsonify({"error": "No date field in daily_health data"}), 404
-
-        numeric_cols = [
-            c for c in ["hrv_avg", "resting_hr", "sleep_duration_hours", "recovery_score", "steps"]
-            if c in df.columns
-        ]
-        if numeric_cols:
-            for c in numeric_cols:
-                df[c] = pd.to_numeric(df[c], errors="coerce")
-            df = df.groupby("date", as_index=False)[numeric_cols].mean()
+        if has_daily_health and "date" in result.columns:
+            # Process actual data from daily_health
+            df = result.copy()
+            numeric_cols = [
+                c for c in ["hrv_avg", "resting_hr", "sleep_duration_hours", "recovery_score", "steps"]
+                if c in df.columns
+            ]
+            if numeric_cols:
+                for c in numeric_cols:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+                df = df.groupby("date", as_index=False)[numeric_cols].mean()
+            else:
+                df = df[["date"]].drop_duplicates()
+            df = df.sort_values("date").tail(days)
+            dates_list = df["date"].tolist()
         else:
-            df = df[["date"]].drop_duplicates()
-
-        df = df.sort_values("date").tail(days)
+            # No daily_health data - create empty dataframe with just dates
+            df = pd.DataFrame({"date": dates_list})
 
         def clean_series(series, digits=2):
             return [None if pd.isna(v) else round(float(v), digits) for v in series.tolist()]
 
-        # Also fetch weight history from manual_values
-        weight_data = []
+        # Also fetch manual values history (weight, hrv, sleep, etc.)
+        manual_data = {field: {} for field in ['weight', 'hrv', 'sleep', 'resting_hr', 'steps']}
         try:
-            weight_query = f'''
+            manual_query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
               |> range(start: -{days}d)
               |> filter(fn: (r) => r._measurement == "manual_values")
-              |> filter(fn: (r) => r._field == "weight")
+              |> filter(fn: (r) => r._field == "weight" or r._field == "hrv" or r._field == "sleep" or r._field == "resting_hr" or r._field == "steps")
               |> filter(fn: (r) => r.deleted != "true")
             '''
-            weight_result = query_api.query(weight_query)
-            weight_by_date = {}
-            for table in weight_result:
+            manual_result = query_api.query(manual_query)
+            for table in manual_result:
                 for record in table.records:
                     date = record.values.get('date', '')
-                    if date:
-                        weight_by_date[date] = float(record.get_value())
-            
-            # Map weights to the dates array
-            for date in df["date"].tolist():
-                weight_data.append(weight_by_date.get(date))
+                    field = record.get_field()
+                    if date and field in manual_data:
+                        manual_data[field][date] = float(record.get_value())
         except Exception as e:
-            logger.warning(f"Could not fetch weight history: {e}")
-            weight_data = [None] * len(df)
+            logger.warning(f"Could not fetch manual values history: {e}")
+
+        # Helper to merge automated and manual data, preferring manual values
+        def merge_with_manual(auto_series, manual_dict, dates_list):
+            result = []
+            for i, date in enumerate(dates_list):
+                manual_val = manual_dict.get(date)
+                if manual_val is not None:
+                    result.append(manual_val)
+                elif i < len(auto_series):
+                    result.append(auto_series[i])
+                else:
+                    result.append(None)
+            return result
+
+        dates_list = df["date"].tolist()
+        hrv_auto = clean_series(df["hrv_avg"], 2) if "hrv_avg" in df else [None] * len(dates_list)
+        rhr_auto = clean_series(df["resting_hr"], 2) if "resting_hr" in df else [None] * len(dates_list)
+        sleep_auto = clean_series(df["sleep_duration_hours"], 2) if "sleep_duration_hours" in df else [None] * len(dates_list)
+        steps_auto = clean_series(df["steps"], 0) if "steps" in df else [None] * len(dates_list)
 
         return jsonify({
-            "dates": df["date"].tolist(),
-            "hrv": clean_series(df["hrv_avg"], 2) if "hrv_avg" in df else [],
-            "resting_hr": clean_series(df["resting_hr"], 2) if "resting_hr" in df else [],
-            "sleep": clean_series(df["sleep_duration_hours"], 2) if "sleep_duration_hours" in df else [],
+            "dates": dates_list,
+            "hrv": merge_with_manual(hrv_auto, manual_data['hrv'], dates_list),
+            "resting_hr": merge_with_manual(rhr_auto, manual_data['resting_hr'], dates_list),
+            "sleep": merge_with_manual(sleep_auto, manual_data['sleep'], dates_list),
             "recovery": clean_series(df["recovery_score"], 1) if "recovery_score" in df else [],
-            "steps": clean_series(df["steps"], 0) if "steps" in df else [],
-            "weight": weight_data
+            "steps": merge_with_manual(steps_auto, manual_data['steps'], dates_list),
+            "weight": [manual_data['weight'].get(d) for d in dates_list]
         })
     except Exception as e:
         logger.error(f"Error fetching health history: {e}")
