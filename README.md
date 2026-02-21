@@ -28,6 +28,10 @@
 
 A comprehensive health monitoring and exercise planning system that collects data from wearable devices (Strava, Apple Health, Suunto, Garmin, Polar, Oura, Fitbit), stores it in InfluxDB, and provides AI-powered exercise recommendations through a beautiful web dashboard.
 
+### Dashboard Preview
+
+![Health Dashboard Preview](dashboard-preview.png)
+
 ---
 
 ## Features
