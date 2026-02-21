@@ -121,9 +121,9 @@
             justify-content: center;
             font-size: 14px;
             transition: background 0.2s, color 0.2s;
-            opacity: 0;
+            opacity: 0.5;
         }
-        
+
         .card:hover .card-action-btn {
             opacity: 1;
         }
@@ -1016,6 +1016,7 @@
                 updateWorkouts(workouts);
                 
                 // Fetch calories for selected date (add timestamp to prevent caching)
+                console.log('Fetching calories for date:', caloriesDateStr, 'currentViewDate:', currentViewDate);
                 const caloriesRes = await fetch('/api/calories?date=' + caloriesDateStr + '&_t=' + Date.now());
                 const caloriesData = await caloriesRes.json();
                 updateCalories(caloriesData);
