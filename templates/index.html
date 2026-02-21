@@ -1608,11 +1608,14 @@
                         // Save the value
                         const newValue = parseFloat(inputEl.value);
                         const selectedDate = dateEl ? dateEl.value : getDefaultDate(card);
+                        console.log('Saving:', metric, '=', newValue, 'on date:', selectedDate);
                         if (!isNaN(newValue)) {
                             saveManualValue(metric, newValue, selectedDate);
                             useManual[metric] = true;
                             card.classList.add('manual-value');
                             updateDisplayValue(metric, newValue);
+                        } else {
+                            alert('Invalid value: ' + inputEl.value);
                         }
                         inputEl.classList.remove('editing');
                         valueEl.classList.remove('editing');
@@ -1729,6 +1732,7 @@
         async function saveManualValue(metric, value, date = null) {
             try {
                 const saveDate = date || getLocalDateString(new Date());
+                console.log('API call: saving', metric, '=', value, 'for date', saveDate);
                 const response = await fetch('/api/manual-values', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
