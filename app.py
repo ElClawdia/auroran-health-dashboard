@@ -831,14 +831,40 @@ def recommendations_today():
 @app.route('/api/calories')
 @login_required
 def calories():
-    """Get calories burned from workouts for today (default) or specified date"""
+    """Get calories burned for today (default) or specified date.
+    
+    Sources (in priority order):
+    1. daily_health.total_calories (from Apple Health import - basal + active)
+    2. workout_cache/workouts calories (from Strava sync)
+    """
     date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
     
     if not query_api:
         return jsonify({"calories": 0, "date": date})
     
     try:
-        # Query calories from workouts for the specified date
+        # First try to get total calories from daily_health (Apple Health import)
+        target_dt = datetime.strptime(date, "%Y-%m-%d")
+        start_dt = target_dt - timedelta(days=1)
+        stop_dt = target_dt + timedelta(days=1)
+        
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT23:59:59Z")})
+          |> filter(fn: (r) => r._measurement == "daily_health")
+          |> filter(fn: (r) => r.date == "{date}")
+          |> filter(fn: (r) => r._field == "total_calories")
+          |> last()
+        '''
+        result = query_api.query(query)
+        
+        for table in result:
+            for record in table.records:
+                val = record.get_value()
+                if val:
+                    return jsonify({"calories": int(val), "date": date, "source": "apple_health"})
+        
+        # Fall back to workout calories from Strava
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: -30d)
@@ -856,7 +882,7 @@ def calories():
                 if val:
                     total_calories += float(val)
         
-        return jsonify({"calories": int(total_calories), "date": date})
+        return jsonify({"calories": int(total_calories), "date": date, "source": "strava"})
     except Exception as e:
         logger.error(f"Error fetching calories: {e}")
         return jsonify({"calories": 0, "date": date, "error": str(e)})
