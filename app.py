@@ -1497,13 +1497,14 @@ def _dash_fetch_weight(date: str) -> dict:
 def api_dashboard():
     """Combined endpoint: all dashboard data in one response. Queries run in parallel."""
     date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    days = request.args.get('days', 10, type=int)  # 10-day window for fast loads
     now = datetime.now()
-    if date in _dashboard_cache:
-        cached, expires = _dashboard_cache[date]
+    cache_key = f"{date}:{days}"
+    if cache_key in _dashboard_cache:
+        cached, expires = _dashboard_cache[cache_key]
         if now < expires:
             return jsonify(cached)
-        del _dashboard_cache[date]
-    days = 30
+        del _dashboard_cache[cache_key]
     out = {}
     with ThreadPoolExecutor(max_workers=7) as ex:
         futures = {
@@ -1522,7 +1523,7 @@ def api_dashboard():
             except Exception as e:
                 logger.error(f"Dashboard {key} error: {e}")
                 out[key] = {"error": str(e)} if key != "workouts" else []
-    _dashboard_cache[date] = (out, now + timedelta(seconds=CACHE_TTL_SECONDS))
+    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=CACHE_TTL_SECONDS))
     return jsonify(out)
 
 

@@ -971,16 +971,22 @@
             return useManual[metric] === true && manualValues[metric] !== null && manualValues[metric] !== undefined;
         }
         
+        let fetchAbortController = null;
         async function fetchData() {
+            if (fetchAbortController) fetchAbortController.abort();
+            fetchAbortController = new AbortController();
+            const date = currentViewDate;
             try {
-                const date = currentViewDate;
-                
-                // Single combined request - server runs all queries in parallel
-                const res = await fetch('/api/dashboard?date=' + date);
+                // 10-day window for fast loads; single combined request
+                const res = await fetch('/api/dashboard?date=' + date + '&days=10', {
+                    signal: fetchAbortController.signal
+                });
                 const data = await res.json();
                 if (!res.ok) {
                     throw new Error(data.error || 'Failed to load dashboard');
                 }
+                // Ignore response if user changed date while fetching
+                if (date !== currentViewDate) return;
                 
                 const health = data.health || {};
                 const history = data.history || {};
@@ -1005,6 +1011,7 @@
                     'Updated: ' + new Date().toLocaleTimeString();
                     
             } catch (error) {
+                if (error.name === 'AbortError') return;
                 console.error('Error fetching data:', error);
                 document.getElementById('error-container').innerHTML = 
                     `<div class="error">Error loading data: ${error.message}</div>`;
