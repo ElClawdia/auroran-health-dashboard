@@ -135,6 +135,7 @@ _workout_index: dict[str, object] = {
     "data": None,        # list of workouts
     "loading": False,
     "loaded_at": None,
+    "loading_started_at": None,
 }
 _workout_index_lock = threading.Lock()
 
@@ -439,7 +440,7 @@ def clear_cache():
     _weight_cache.clear()
     _dashboard_cache.clear()
     with _workout_index_lock:
-        _workout_index = {"data": None, "loading": False, "loaded_at": None}
+        _workout_index = {"data": None, "loading": False, "loaded_at": None, "loading_started_at": None}
     logger.info("Cache cleared by user")
     return jsonify({"success": True, "message": "Cache cleared"})
 
@@ -744,6 +745,7 @@ def _load_workout_index() -> None:
         _workout_index["data"] = data
         _workout_index["loaded_at"] = datetime.now()
         _workout_index["loading"] = False
+        _workout_index["loading_started_at"] = None
 
 
 def _ensure_workout_index_loaded():
@@ -753,6 +755,7 @@ def _ensure_workout_index_loaded():
         data = _workout_index.get("data")
         loaded_at = _workout_index.get("loaded_at")
         loading = _workout_index.get("loading", False)
+        loading_started_at = _workout_index.get("loading_started_at")
 
         if data and loaded_at and (now - loaded_at).total_seconds() < WORKOUT_INDEX_TTL_SECONDS:
             return data
@@ -760,6 +763,7 @@ def _ensure_workout_index_loaded():
         # If data exists but is stale, return it and refresh in background
         if not loading:
             _workout_index["loading"] = True
+            _workout_index["loading_started_at"] = now
             threading.Thread(target=_load_workout_index, daemon=True).start()
 
         return data
@@ -782,6 +786,20 @@ def workouts():
             if before_date or filter_date:
                 index = _ensure_workout_index_loaded()
                 if index is None:
+                    # If index is still loading for too long, fallback to direct query
+                    with _workout_index_lock:
+                        loading_started_at = _workout_index.get("loading_started_at")
+                    if loading_started_at and (datetime.now() - loading_started_at).total_seconds() > 15:
+                        logger.warning("Workout index slow to load; falling back to direct query")
+                        records = _fetch_workouts_from_influx(before_date=before_date)
+                        if filter_date:
+                            records = [w for w in records if w.get('date') == filter_date]
+                        elif before_date:
+                            records = [w for w in records if w.get('date', '') <= before_date]
+                        if limit and limit > 0:
+                            records = records[:limit]
+                        return jsonify(records)
+
                     resp = jsonify({"loading": True})
                     resp.status_code = 503
                     resp.headers["Retry-After"] = "3"
