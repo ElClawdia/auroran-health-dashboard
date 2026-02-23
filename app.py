@@ -1132,6 +1132,7 @@ def weight():
         try:
             target_dt = datetime.strptime(date, "%Y-%m-%d")
             start_dt = target_dt - timedelta(days=7)
+            weight_start_dt = target_dt - timedelta(days=WEIGHT_LOOKBACK_DAYS)
             stop_dt = target_dt + timedelta(days=1)
             # 1. Manual override for this specific date (get latest, then exclude if deleted)
             query = f'''
@@ -1621,7 +1622,7 @@ def _dash_fetch_weight(date: str) -> dict:
         # 1. Manual for this date
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "manual_values")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date == "{date}")
@@ -1637,7 +1638,7 @@ def _dash_fetch_weight(date: str) -> dict:
         # 2. daily_health for this date
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date == "{date}")
@@ -1648,13 +1649,14 @@ def _dash_fetch_weight(date: str) -> dict:
                 v = rec.get_value()
                 if v:
                     return {"weight": float(v), "source": "auto", "date": date}
-        # 3. Most recent manual (any date)
+        # 3. Most recent manual on/before this date (within lookback window)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "manual_values")
           |> filter(fn: (r) => r._field == "weight")
-          |> sort(columns: ["_time"], desc: true)
+          |> filter(fn: (r) => r.date <= "{date}")
+          |> sort(columns: ["date"], desc: true)
           |> limit(n: 1)
           |> filter(fn: (r) => r.deleted != "true")
         '''
@@ -1662,20 +1664,23 @@ def _dash_fetch_weight(date: str) -> dict:
             for rec in table.records:
                 v = rec.get_value()
                 if v:
-                    return {"weight": float(v), "source": "manual", "date": date}
-        # 4. Most recent daily_health
+                    return {"weight": float(v), "source": "manual", "date": rec.values.get("date", date)}
+
+        # 4. Most recent daily_health on/before this date (within lookback window)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r._field == "weight")
-          |> last()
+          |> filter(fn: (r) => r.date <= "{date}")
+          |> sort(columns: ["date"], desc: true)
+          |> limit(n: 1)
         '''
         for table in query_api.query(query):
             for rec in table.records:
                 v = rec.get_value()
                 if v:
-                    return {"weight": float(v), "source": "auto", "date": date}
+                    return {"weight": float(v), "source": "auto", "date": rec.values.get("date", date)}
         return {"weight": None, "date": date}
     except Exception as e:
         logger.error(f"Dashboard weight error: {e}")
