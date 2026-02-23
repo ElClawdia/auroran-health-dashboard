@@ -8,12 +8,18 @@ import os
 import sys
 from pathlib import Path
 
+# Suppress config INFO/DEBUG logs for CLI runs
+os.environ.setdefault("LOG_LEVEL", "WARNING")
+
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import subprocess
 
-from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET
+from config import (
+    INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET,
+    STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN,
+)
 from datetime import datetime, timedelta, date
 
 # Get fresh Strava token (auto-refreshes if needed)
@@ -28,9 +34,6 @@ except Exception as e:
     print(f"ERROR: Could not get Strava token: {e}")
     sys.exit(1)
 
-STRAVA_CLIENT_ID = ""
-STRAVA_CLIENT_SECRET = ""
-STRAVA_REFRESH_TOKEN = ""
 from strava_client import StravaClient
 from influxdb_client import InfluxDBClient, Point
 from training_load import calculate_training_load
@@ -49,12 +52,12 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
         print("ERROR: No InfluxDB token configured")
         return False
     
-    # Initialize clients
+    # Initialize clients (config credentials used for token refresh during long syncs)
     strava = StravaClient(
         access_token=STRAVA_ACCESS_TOKEN,
-        client_id=STRAVA_CLIENT_ID,
-        client_secret=STRAVA_CLIENT_SECRET,
-        refresh_token=STRAVA_REFRESH_TOKEN
+        client_id=STRAVA_CLIENT_ID or "",
+        client_secret=STRAVA_CLIENT_SECRET or "",
+        refresh_token=STRAVA_REFRESH_TOKEN or "",
     )
     influxdb = InfluxDBClient(
         url=INFLUXDB_URL,
@@ -91,10 +94,11 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
         
         print(f"Syncing {len(activities)} activities to InfluxDB...")
         
-        # Get existing workout dates from InfluxDB to avoid duplicates
+        # Get existing Strava IDs from InfluxDB to avoid duplicates
         query_api = influxdb.query_api()
-        # Query ALL workouts (not just 30 days) to avoid duplicates
-        existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -365d) |> filter(fn: (r) => r._measurement == "workouts") |> filter(fn: (r) => r._field == "strava_id")'
+        # Use range that matches our sync - extend for full historical syncs
+        range_days = min(max(fetch_days + 30, 365), 4000)  # 4000d ~ 11 years
+        existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -{range_days}d) |> filter(fn: (r) => r._measurement == "workouts") |> filter(fn: (r) => r._field == "strava_id")'
         try:
             result = query_api.query(existing_query)
             existing_ids = set()
@@ -198,7 +202,21 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
     return True
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sync Strava workouts to InfluxDB")
+    parser = argparse.ArgumentParser(
+        description="Sync Strava workouts to InfluxDB.",
+        epilog="""
+Examples:
+  python3 sync_strava.py
+      Incremental sync (last 30 days).
+  python3 sync_strava.py --days 7
+      Sync last 7 days only.
+  python3 sync_strava.py --force
+      Full sync (~3 years of history).
+  python3 sync_strava.py --newer-than 20240101
+      Sync activities since 2024-01-01.
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--days", "-d", type=int, default=None,
         help="Number of days to fetch (default: 30 for incremental sync)"

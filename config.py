@@ -10,9 +10,11 @@ import json
 import logging
 from pathlib import Path
 
-# Setup logging
+# Setup logging (respect LOG_LEVEL env for CLI scripts)
+_log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+_level = getattr(logging, _log_level, logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ smtp_config = {}
 if SMTP_CONFIG_FILE.exists():
     with open(SMTP_CONFIG_FILE) as f:
         smtp_config = json.load(f)
-    logger.info("SMTP configuration loaded from smtp_config.json")
+    logger.debug("SMTP configuration loaded from smtp_config.json")
 
 def get_secret(key, default=''):
     """Get secret from env var or secrets file"""
@@ -44,7 +46,7 @@ def get_smtp_config(key, default=''):
 
 # InfluxDB Configuration
 INFLUXDB_URL = os.getenv('INFLUXDB_URL', get_secret('influxdb_url', 'http://influxdb:8086'))
-logger.info(f"Using InfluxDB URL: {INFLUXDB_URL}")
+logger.debug(f"Using InfluxDB URL: {INFLUXDB_URL}")
 INFLUXDB_TOKEN = get_secret('influxdb_token', '')
 INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'auroran')
 INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'health')
@@ -58,8 +60,9 @@ STRAVA_ACCESS_TOKEN = get_secret('strava_access_token', '')
 STRAVA_CLIENT_ID = get_secret('strava_client_id', '')
 STRAVA_CLIENT_SECRET = get_secret('strava_client_secret', '')
 STRAVA_REFRESH_TOKEN = get_secret('strava_refresh_token', '')
-logger.info(f"Strava token configured: {bool(STRAVA_ACCESS_TOKEN)}")
-logger.info(f"Strava refresh configured: {bool(STRAVA_REFRESH_TOKEN)}")
+# Strava is configured if we have access_token (secrets) or refresh_token+client creds (renew script)
+_strava_ok = bool(STRAVA_ACCESS_TOKEN) or (STRAVA_REFRESH_TOKEN and STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET)
+logger.debug(f"Strava configured: {_strava_ok}")
 
 # Garmin (no personal API - sync via Strava recommended)
 GARMIN_USERNAME = get_secret('garmin_username', '')

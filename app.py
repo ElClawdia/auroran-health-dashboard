@@ -83,7 +83,8 @@ if INFLUXDB_TOKEN:
         influx_client = InfluxDBClient(
             url=INFLUXDB_URL,
             token=INFLUXDB_TOKEN,
-            org=INFLUXDB_ORG
+            org=INFLUXDB_ORG,
+            timeout=60_000,  # 60s for large workout history queries
         )
         # Quick health check
         health = influx_client.health()
@@ -615,20 +616,36 @@ def health_history():
         return jsonify({"error": str(e)}), 500
 
 
-def _fetch_workouts_from_influx():
-    """Fetch workouts from InfluxDB with manual pivot (faster than Flux pivot)"""
+def _fetch_workouts_from_influx(before_date: str | None = None):
+    """Fetch workouts from InfluxDB. Uses targeted range when before_date is in the past to avoid timeout."""
     from collections import defaultdict
-    
-    cutoff = (datetime.now() - timedelta(days=WORKOUT_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
-    
+
+    now = datetime.now()
+    if before_date:
+        try:
+            target = datetime.strptime(before_date, "%Y-%m-%d").date()
+            # Use fixed window ending at view date (not today) - much smaller query, avoids timeout
+            start_str = "2010-01-01T00:00:00Z"
+            stop_str = (target + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+            range_clause = f'start: {start_str}, stop: {stop_str}'
+        except ValueError:
+            before_date = None
+    if not before_date:
+        days_back = WORKOUT_LOOKBACK_DAYS
+        cutoff = (now - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        range_clause = f'start: -{days_back}d'
+        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
+    else:
+        date_filter = ""  # range already limits by stop date
+
     # Try workout_cache first (optimized, fewer records)
     # Fall back to workouts measurement if cache doesn't exist
     for measurement in ["workout_cache", "workouts"]:
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{WORKOUT_LOOKBACK_DAYS}d)
+          |> range({range_clause})
           |> filter(fn: (r) => r._measurement == "{measurement}")
-          |> filter(fn: (r) => r.date >= "{cutoff}")
+          {date_filter}
         '''
         
         tables = query_api.query_stream(query)
@@ -675,7 +692,7 @@ def workouts():
                 records = _workout_cache["data"]
             else:
                 logger.info(f"Fetching workouts from InfluxDB (date: {filter_date}, before: {before_date})")
-                records = _fetch_workouts_from_influx()
+                records = _fetch_workouts_from_influx(before_date=before_date)
             
             if not records:
                 return jsonify({"error": "No workouts from InfluxDB"}), 404
