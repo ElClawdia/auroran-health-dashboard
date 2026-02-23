@@ -85,6 +85,7 @@ SMTP config in `smtp_config.json` (see `smtp_config.json.example`).
 
 ## Development Notes
 
+- **Always commit and push** after making changes (user tests on remote server)
 - Demo mode: runs without InfluxDB (mock data)
 - In-memory cache: 30-second TTL for workouts and PMC data
 - API requires authentication (except `/login`, `/forgot-password`, `/register`)
