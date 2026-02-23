@@ -986,6 +986,29 @@
             if (!res.ok) throw new Error(data.error || 'Request failed (status ' + res.status + ')');
             return data;
         }
+        async function fetchWorkoutsOnly(date, signal) {
+            // Phase 3 only - retries allowed
+            const workoutsRes = await fetch('/api/workouts?before_date=' + date + '&limit=10', { signal });
+            if (date !== currentViewDate) return;
+            if (workoutsRes.status === 503) {
+                const retryAfter = parseInt(workoutsRes.headers.get('Retry-After') || '3', 10);
+                setTimeout(() => {
+                    if (date === currentViewDate && fetchAbortController) {
+                        fetchWorkoutsOnly(date, fetchAbortController.signal);
+                    }
+                }, retryAfter * 1000);
+                return;
+            }
+            if (!workoutsRes.ok) return;
+            let workouts = [];
+            try {
+                const raw = await workoutsRes.json();
+                workouts = Array.isArray(raw) ? raw : [];
+            } catch (_) { }
+            updateWorkouts(workouts);
+            document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+        }
+
         async function fetchData() {
             if (fetchAbortController) fetchAbortController.abort();
             fetchAbortController = new AbortController();
@@ -1015,20 +1038,8 @@
                 updatePMC(charts.pmc || {});
                 document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 
-                // Phase 3: Workouts (slowest - can scan many days)
-                timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
-                const workoutsRes = await fetch('/api/workouts?before_date=' + date + '&limit=10', { signal });
-                clearTimeout(timeoutId);
-                if (date !== currentViewDate) return;
-                let workouts = [];
-                if (workoutsRes.ok) {
-                    try {
-                        const raw = await workoutsRes.json();
-                        workouts = Array.isArray(raw) ? raw : [];
-                    } catch (_) { }
-                }
-                updateWorkouts(workouts);
-                document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+                // Phase 3: Workouts (slowest - background + retry)
+                fetchWorkoutsOnly(date, signal);
             } catch (error) {
                 if (error.name === 'AbortError') return;
                 const msg = error.message || String(error);

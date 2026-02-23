@@ -11,6 +11,7 @@ import os
 import sys
 import secrets
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
@@ -111,12 +112,31 @@ strava = StravaClient(
 ) if STRAVA_ACCESS_TOKEN else MockStravaClient()
 planner = ExercisePlanner()
 
+
+_workout_index_preloaded = False
+
+
+@app.before_request
+def _preload_workout_index_once():
+    """Warm the workout index in background after the app starts."""
+    global _workout_index_preloaded
+    if not _workout_index_preloaded:
+        _workout_index_preloaded = True
+        _ensure_workout_index_loaded()
+
 # Simple in-memory cache for workouts, PMC, weight, and dashboard
 _workout_cache = {"data": None, "expires": None}
 _pmc_cache = {"data": None, "expires": None}
 _weight_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
 _dashboard_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
 CACHE_TTL_SECONDS = 30  # 30 seconds - quick refresh after syncing
+WORKOUT_INDEX_TTL_SECONDS = 600  # 10 minutes
+_workout_index: dict[str, object] = {
+    "data": None,        # list of workouts
+    "loading": False,
+    "loaded_at": None,
+}
+_workout_index_lock = threading.Lock()
 
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 90
@@ -413,11 +433,13 @@ def api_user():
 @login_required
 def clear_cache():
     """Clear all in-memory caches to force fresh data fetch"""
-    global _workout_cache, _pmc_cache, _weight_cache, _dashboard_cache
+    global _workout_cache, _pmc_cache, _weight_cache, _dashboard_cache, _workout_index
     _workout_cache = {"data": None, "expires": None}
     _pmc_cache = {"data": None, "expires": None}
     _weight_cache.clear()
     _dashboard_cache.clear()
+    with _workout_index_lock:
+        _workout_index = {"data": None, "loading": False, "loaded_at": None}
     logger.info("Cache cleared by user")
     return jsonify({"success": True, "message": "Cache cleared"})
 
@@ -674,6 +696,74 @@ def _fetch_workouts_from_influx(before_date: str | None = None):
     return result
 
 
+def _load_workout_index() -> None:
+    """Background load of all workouts into memory for fast filtering."""
+    if not query_api:
+        with _workout_index_lock:
+            _workout_index["loading"] = False
+        return
+
+    from collections import defaultdict
+
+    fields = [
+        "duration", "duration_minutes", "avg_hr", "max_hr", "calories",
+        "suffer_score", "distance", "elevation_gain", "start_time", "time",
+        "name", "strava_id", "feeling", "intensity"
+    ]
+    field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -4000d)
+      |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
+      |> filter(fn: (r) => {field_filter})
+    '''
+
+    workouts = defaultdict(dict)
+    try:
+        tables = query_api.query_stream(query)
+        for record in tables:
+            key = str(record.get_time())
+            field = record.get_field()
+            value = record.get_value()
+            workouts[key][field] = value
+            workouts[key]["date"] = record.values.get("date", "")
+            workouts[key]["type"] = record.values.get("type", "")
+    except Exception as e:
+        logger.error(f"Error loading workout index: {e}")
+        with _workout_index_lock:
+            _workout_index["loading"] = False
+        return
+
+    # Sort by date and start_time descending once
+    data = sorted(
+        workouts.values(),
+        key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+        reverse=True,
+    )
+    with _workout_index_lock:
+        _workout_index["data"] = data
+        _workout_index["loaded_at"] = datetime.now()
+        _workout_index["loading"] = False
+
+
+def _ensure_workout_index_loaded():
+    """Return cached workout index or trigger background load."""
+    now = datetime.now()
+    with _workout_index_lock:
+        data = _workout_index.get("data")
+        loaded_at = _workout_index.get("loaded_at")
+        loading = _workout_index.get("loading", False)
+
+        if data and loaded_at and (now - loaded_at).total_seconds() < WORKOUT_INDEX_TTL_SECONDS:
+            return data
+
+        # If data exists but is stale, return it and refresh in background
+        if not loading:
+            _workout_index["loading"] = True
+            threading.Thread(target=_load_workout_index, daemon=True).start()
+
+        return data
+
 @app.route('/api/workouts', methods=['GET', 'POST'])
 @login_required
 def workouts():
@@ -688,6 +778,28 @@ def workouts():
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
+            # Fast path: use in-memory index for date-filtered requests
+            if before_date or filter_date:
+                index = _ensure_workout_index_loaded()
+                if index is None:
+                    resp = jsonify({"loading": True})
+                    resp.status_code = 503
+                    resp.headers["Retry-After"] = "3"
+                    return resp
+                records = []
+                for w in index:
+                    d = w.get('date', '')
+                    if not d:
+                        continue
+                    if filter_date and d != filter_date:
+                        continue
+                    if before_date and d > before_date:
+                        continue
+                    records.append(w)
+                    if limit and limit > 0 and len(records) >= limit:
+                        break
+                return jsonify(records)
+
             # Check cache first (only if no filters)
             now = datetime.now()
             if not filter_date and not before_date and _workout_cache["data"] and _workout_cache["expires"] and now < _workout_cache["expires"]:
