@@ -697,6 +697,46 @@ def _fetch_workouts_from_influx(before_date: str | None = None):
     return result
 
 
+def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
+    """Fetch only the most recent workouts (limited) using Flux pivot + limit."""
+    if not query_api:
+        return []
+
+    fields = [
+        "duration", "duration_minutes", "avg_hr", "max_hr", "calories",
+        "suffer_score", "distance", "elevation_gain", "start_time", "time",
+        "name", "strava_id", "feeling", "intensity"
+    ]
+    field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
+    date_filter = f'|> filter(fn: (r) => r.date <= "{before_date}")' if before_date else ""
+    # Keep range moderate for speed; date tag filter enforces cutoff
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -365d)
+      |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
+      |> filter(fn: (r) => {field_filter})
+      {date_filter}
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> keep(columns: ["_time", "date", "type", {", ".join([f'"{f}"' for f in fields])}])
+      |> sort(columns: ["date", "start_time"], desc: true)
+      |> limit(n: {limit})
+    '''
+    result = query_api.query_data_frame(query)
+    if isinstance(result, list):
+        if len(result) == 0:
+            return []
+        result = pd.concat(result, ignore_index=True)
+    if result.empty:
+        return []
+
+    records = result.to_dict(orient="records")
+    # Clean NaN values
+    cleaned = []
+    for row in records:
+        cleaned.append({k: (None if pd.isna(v) else v) for k, v in row.items()})
+    return cleaned
+
+
 def _load_workout_index() -> None:
     """Background load of all workouts into memory for fast filtering."""
     if not query_api:
@@ -782,6 +822,11 @@ def workouts():
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
+            # Fast path: for the dashboard we only need 10 recent workouts
+            if before_date and limit and limit <= 10:
+                records = _fetch_workouts_limited(before_date, limit)
+                return jsonify(records)
+
             # Fast path: use in-memory index for date-filtered requests
             if before_date or filter_date:
                 index = _ensure_workout_index_loaded()
