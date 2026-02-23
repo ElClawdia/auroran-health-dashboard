@@ -617,33 +617,24 @@ def health_history():
 
 
 def _fetch_workouts_from_influx(before_date: str | None = None):
-    """Fetch workouts from InfluxDB. Uses targeted range when before_date is in the past to avoid timeout."""
+    """Fetch workouts from InfluxDB. Filter by date tag (not _time - points use write time)."""
     from collections import defaultdict
 
     now = datetime.now()
+    days_back = WORKOUT_LOOKBACK_DAYS
+    cutoff = (now - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    # Use wide range - _time is write time, not workout date; we filter by date tag
+    range_days = 4000 if before_date else days_back
+    date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
     if before_date:
-        try:
-            target = datetime.strptime(before_date, "%Y-%m-%d").date()
-            # Use fixed window ending at view date (not today) - much smaller query, avoids timeout
-            start_str = "2010-01-01T00:00:00Z"
-            stop_str = (target + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
-            range_clause = f'start: {start_str}, stop: {stop_str}'
-        except ValueError:
-            before_date = None
-    if not before_date:
-        days_back = WORKOUT_LOOKBACK_DAYS
-        cutoff = (now - timedelta(days=days_back)).strftime('%Y-%m-%d')
-        range_clause = f'start: -{days_back}d'
-        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
-    else:
-        date_filter = ""  # range already limits by stop date
+        date_filter = f'|> filter(fn: (r) => r.date <= "{before_date}")'
 
     # Try workout_cache first (optimized, fewer records)
     # Fall back to workouts measurement if cache doesn't exist
     for measurement in ["workout_cache", "workouts"]:
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range({range_clause})
+          |> range(start: -{range_days}d)
           |> filter(fn: (r) => r._measurement == "{measurement}")
           {date_filter}
         '''
