@@ -974,28 +974,21 @@
         async function fetchData() {
             try {
                 const date = currentViewDate;
-                const ts = Date.now();
                 
-                // Parallel fetch all API data
-                const [healthRes, historyRes, recRes, pmcRes, workoutsRes, caloriesRes, weightRes] = await Promise.all([
-                    fetch('/api/health/today?date=' + date),
-                    fetch('/api/health/history?days=30&end_date=' + date),
-                    fetch('/api/recommendations/today?date=' + date),
-                    fetch('/api/pmc?days=30&end_date=' + date),
-                    fetch('/api/workouts?before_date=' + date + '&limit=10'),
-                    fetch('/api/calories?date=' + date + '&_t=' + ts),
-                    fetch('/api/weight?date=' + date + '&_t=' + ts)
-                ]);
+                // Single combined request - server runs all queries in parallel
+                const res = await fetch('/api/dashboard?date=' + date);
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || 'Failed to load dashboard');
+                }
                 
-                const [health, history, recommendation, pmc, workoutsRaw, caloriesData, weightData] = await Promise.all([
-                    healthRes.json(),
-                    historyRes.json(),
-                    recRes.json(),
-                    pmcRes.json(),
-                    workoutsRes.json(),
-                    caloriesRes.json(),
-                    weightRes.json()
-                ]);
+                const health = data.health || {};
+                const history = data.history || {};
+                const recommendation = data.recommendation || {};
+                const pmc = data.pmc || {};
+                const workoutsRaw = data.workouts;
+                const caloriesData = data.calories || {};
+                const weightData = data.weight || {};
                 const workouts = Array.isArray(workoutsRaw) ? workoutsRaw : [];
                 
                 updateHealthCards(health);
@@ -1499,7 +1492,7 @@
             const container = document.getElementById('workouts-list');
             const titleEl = document.getElementById('workouts-chart-title');
             if (titleEl) {
-                titleEl.textContent = '🏃 Recent Workouts ' + formatWorkoutsHeaderDate(currentViewDate);
+                titleEl.textContent = '🏃 Recent Workouts (through ' + formatWorkoutsHeaderDate(currentViewDate) + ')';
             }
             
             if (!workouts || workouts.length === 0) {
