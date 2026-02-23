@@ -626,12 +626,12 @@ def _fetch_workouts_from_influx(before_date: str | None = None):
     now = datetime.now()
     days_back = WORKOUT_LOOKBACK_DAYS
     cutoff = (now - timedelta(days=days_back)).strftime('%Y-%m-%d')
-    # Use 4000d only when viewing distant past; for today/recent dates use 90d (fast)
+    # Cap range for speed: 90d for recent, max 365d for old dates (avoids slow 4000d scans)
     if before_date:
         try:
             target = datetime.strptime(before_date, "%Y-%m-%d").date()
             days_ago = (now.date() - target).days
-            range_days = 4000 if days_ago > days_back else days_back
+            range_days = days_back if days_ago <= days_back else 365
         except ValueError:
             range_days = days_back
     else:
@@ -1165,7 +1165,7 @@ def strava_sync():
         return jsonify({"error": str(e)}), 500
 
 
-def _fetch_daily_loads_from_influx(query_days=365):
+def _fetch_daily_loads_from_influx(query_days=120):
     """Fetch daily training loads from InfluxDB (optimized, no pivot)"""
     from collections import defaultdict
     

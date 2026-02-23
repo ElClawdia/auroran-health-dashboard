@@ -972,18 +972,28 @@
         }
         
         let fetchAbortController = null;
+        const FETCH_TIMEOUT_MS = 15000;  // 15s - fail fast if server is slow
         async function fetchData() {
             if (fetchAbortController) fetchAbortController.abort();
             fetchAbortController = new AbortController();
+            let timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
             const date = currentViewDate;
             try {
                 // 10-day window for fast loads; single combined request
                 const res = await fetch('/api/dashboard?date=' + date + '&days=10', {
                     signal: fetchAbortController.signal
                 });
-                const data = await res.json();
+                clearTimeout(timeoutId);
+                const text = await res.text();
+                let data;
+                try {
+                    data = text ? JSON.parse(text) : {};
+                } catch (e) {
+                    const preview = text.slice(0, 150).replace(/</g, '&lt;');
+                    throw new Error('Server returned invalid JSON. ' + (res.ok ? '' : 'Status: ' + res.status + '. ') + 'Response: ' + preview);
+                }
                 if (!res.ok) {
-                    throw new Error(data.error || 'Failed to load dashboard');
+                    throw new Error(data.error || 'Failed to load dashboard (status ' + res.status + ')');
                 }
                 // Ignore response if user changed date while fetching
                 if (date !== currentViewDate) return;
@@ -1011,10 +1021,13 @@
                     'Updated: ' + new Date().toLocaleTimeString();
                     
             } catch (error) {
+                if (timeoutId) clearTimeout(timeoutId);
                 if (error.name === 'AbortError') return;
+                const msg = error.message || String(error);
+                const isTimeout = msg.includes('aborted') || msg.includes('Abort');
                 console.error('Error fetching data:', error);
                 document.getElementById('error-container').innerHTML = 
-                    `<div class="error">Error loading data: ${error.message}</div>`;
+                    `<div class="error">Error loading data: ${isTimeout ? 'Request timed out (server too slow). Try a more recent date.' : msg}</div>`;
             }
         }
         
