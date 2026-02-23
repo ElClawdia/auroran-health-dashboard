@@ -902,42 +902,58 @@ def weight():
             target_dt = datetime.strptime(date, "%Y-%m-%d")
             start_dt = target_dt - timedelta(days=7)
             stop_dt = target_dt + timedelta(days=1)
-            # First check manual values for the specific date
+            # 1. Manual override for this specific date (get latest, then exclude if deleted)
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
               |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r._field == "weight")
               |> filter(fn: (r) => r.date == "{date}")
+              |> sort(columns: ["_time"], desc: true)
+              |> limit(n: 1)
               |> filter(fn: (r) => r.deleted != "true")
-              |> last()
             '''
             result = query_api.query(query)
-            
             for table in result:
                 for record in table.records:
                     val = record.get_value()
                     if val:
                         return jsonify({"weight": float(val), "source": "manual", "date": date})
-            
-            # Fall back to most recent manual weight (any date)
+
+            # 2. daily_health for this specific date (Fitbit, Apple Health, Suunto)
+            query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
+              |> filter(fn: (r) => r._measurement == "daily_health")
+              |> filter(fn: (r) => r._field == "weight")
+              |> filter(fn: (r) => r.date == "{date}")
+              |> last()
+            '''
+            result = query_api.query(query)
+            for table in result:
+                for record in table.records:
+                    val = record.get_value()
+                    if val:
+                        return jsonify({"weight": float(val), "source": "auto", "date": date})
+
+            # 3. Most recent manual weight (any date) when no data for this date (exclude if latest is deleted)
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
               |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
               |> filter(fn: (r) => r._measurement == "manual_values")
               |> filter(fn: (r) => r._field == "weight")
+              |> sort(columns: ["_time"], desc: true)
+              |> limit(n: 1)
               |> filter(fn: (r) => r.deleted != "true")
-              |> last()
             '''
             result = query_api.query(query)
-            
             for table in result:
                 for record in table.records:
                     val = record.get_value()
                     if val:
                         return jsonify({"weight": float(val), "source": "manual", "date": date})
-            
-            # Fall back to daily_health if available
+
+            # 4. Most recent daily_health weight when no data for this date
             query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
               |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
@@ -946,7 +962,6 @@ def weight():
               |> last()
             '''
             result = query_api.query(query)
-            
             for table in result:
                 for record in table.records:
                     val = record.get_value()
