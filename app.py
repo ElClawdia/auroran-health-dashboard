@@ -822,14 +822,29 @@ def workouts():
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
-            # Fast path: for the dashboard we only need 10 recent workouts
-            if before_date and limit and limit <= 10:
-                records = _fetch_workouts_limited(before_date, limit)
-                return jsonify(records)
-
             # Fast path: use in-memory index for date-filtered requests
             if before_date or filter_date:
                 index = _ensure_workout_index_loaded()
+                if index:
+                    records = []
+                    for w in index:
+                        d = w.get('date', '')
+                        if not d:
+                            continue
+                        if filter_date and d != filter_date:
+                            continue
+                        if before_date and d > before_date:
+                            continue
+                        records.append(w)
+                        if limit and limit > 0 and len(records) >= limit:
+                            break
+                    return jsonify(records)
+
+                # If index not ready, use limited query for dashboard requests
+                if before_date and limit and limit <= 10:
+                    records = _fetch_workouts_limited(before_date, limit)
+                    return jsonify(records)
+
                 if index is None:
                     # If index is still loading for too long, fallback to direct query
                     with _workout_index_lock:
@@ -1885,5 +1900,10 @@ def trends():
 
 
 if __name__ == '__main__':
+    # Preload workout index so workouts are instant after startup
+    if query_api:
+        logger.info("Preloading workout index (may take a bit on startup)...")
+        _load_workout_index()
+        logger.info("Workout index ready.")
     logger.info(f"Starting Health Dashboard on port {FLASK_PORT}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
