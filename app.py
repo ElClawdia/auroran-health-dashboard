@@ -109,9 +109,10 @@ strava = StravaClient(
 ) if STRAVA_ACCESS_TOKEN else MockStravaClient()
 planner = ExercisePlanner()
 
-# Simple in-memory cache for workouts and PMC data
+# Simple in-memory cache for workouts, PMC, and weight
 _workout_cache = {"data": None, "expires": None}
 _pmc_cache = {"data": None, "expires": None}
+_weight_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
 CACHE_TTL_SECONDS = 30  # 30 seconds - quick refresh after syncing
 
 # Dashboard lookback windows (keep small for speed)
@@ -409,9 +410,10 @@ def api_user():
 @login_required
 def clear_cache():
     """Clear all in-memory caches to force fresh data fetch"""
-    global _workout_cache, _pmc_cache
+    global _workout_cache, _pmc_cache, _weight_cache
     _workout_cache = {"data": None, "expires": None}
     _pmc_cache = {"data": None, "expires": None}
+    _weight_cache.clear()
     logger.info("Cache cleared by user")
     return jsonify({"success": True, "message": "Cache cleared"})
 
@@ -421,7 +423,7 @@ def clear_cache():
 def health_today():
     """Get health metrics for a specific date (default: today)"""
     target_date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
-    logger.info(f"Fetching health metrics for {target_date}")
+    logger.debug(f"Fetching health metrics for {target_date}")
     if not query_api:
         return jsonify({"error": "InfluxDB not configured"}), 500
     
@@ -450,7 +452,7 @@ def health_today():
 
         df = result.copy()
         numeric_cols = [
-            c for c in ["sleep_duration_hours", "hrv_avg", "resting_hr", "steps", "recovery_score", "training_load"]
+            c for c in ["sleep_duration_hours", "hrv_avg", "resting_hr", "steps", "recovery_score", "training_load", "weight"]
             if c in df.columns
         ]
         for c in numeric_cols:
@@ -480,8 +482,9 @@ def health_today():
 
         steps_val = get_value("steps")
         steps_clean = None if steps_val is None else int(float(steps_val))
+        weight_val = get_value("weight")
 
-        return jsonify({
+        out = {
             "date": row.get("date", target_date),
             "sleep_hours": get_value("sleep_duration_hours"),
             "hrv": get_value("hrv_avg"),
@@ -489,7 +492,10 @@ def health_today():
             "steps": steps_clean,
             "recovery_score": get_value("recovery_score"),
             "training_load": get_value("training_load")
-        })
+        }
+        if weight_val is not None:
+            out["weight"] = weight_val
+        return jsonify(out)
     except Exception as e:
         logger.error(f"Error fetching health for {target_date}: {e}")
         return jsonify({"error": str(e)}), 500
@@ -501,7 +507,7 @@ def health_history():
     """Get historical health data"""
     days = request.args.get('days', 30, type=int)
     end_date = request.args.get('end_date', datetime.now().strftime("%Y-%m-%d"))
-    logger.info(f"Fetching health history: {days} days ending {end_date}")
+    logger.debug(f"Fetching health history: {days} days ending {end_date}")
     
     if not query_api:
         # Return mock data for demo
@@ -537,7 +543,7 @@ def health_history():
             # Process actual data from daily_health
             df = result.copy()
             numeric_cols = [
-                c for c in ["hrv_avg", "resting_hr", "sleep_duration_hours", "recovery_score", "steps"]
+                c for c in ["hrv_avg", "resting_hr", "sleep_duration_hours", "recovery_score", "steps", "weight"]
                 if c in df.columns
             ]
             if numeric_cols:
@@ -593,6 +599,7 @@ def health_history():
         rhr_auto = clean_series(df["resting_hr"], 2) if "resting_hr" in df else [None] * len(dates_list)
         sleep_auto = clean_series(df["sleep_duration_hours"], 2) if "sleep_duration_hours" in df else [None] * len(dates_list)
         steps_auto = clean_series(df["steps"], 0) if "steps" in df else [None] * len(dates_list)
+        weight_auto = clean_series(df["weight"], 2) if "weight" in df else [None] * len(dates_list)
 
         return jsonify({
             "dates": dates_list,
@@ -601,7 +608,7 @@ def health_history():
             "sleep": merge_with_manual(sleep_auto, manual_data['sleep'], dates_list),
             "recovery": clean_series(df["recovery_score"], 1) if "recovery_score" in df else [],
             "steps": merge_with_manual(steps_auto, manual_data['steps'], dates_list),
-            "weight": [manual_data['weight'].get(d) for d in dates_list]
+            "weight": merge_with_manual(weight_auto, manual_data['weight'], dates_list)
         })
     except Exception as e:
         logger.error(f"Error fetching health history: {e}")
@@ -653,32 +660,37 @@ def _fetch_workouts_from_influx():
 def workouts():
     """Get or log workouts"""
     if request.method == 'GET':
-        filter_date = request.args.get('date')  # Optional date filter
+        filter_date = request.args.get('date')
+        before_date = request.args.get('before_date')
+        limit = request.args.get('limit', type=int)
         
         if not query_api:
             logger.info("Using mock workouts (no InfluxDB)")
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
-            # Check cache first (only if no date filter)
+            # Check cache first (only if no filters)
             now = datetime.now()
-            if not filter_date and _workout_cache["data"] and _workout_cache["expires"] and now < _workout_cache["expires"]:
-                logger.info("Returning cached workouts")
-                return jsonify(_workout_cache["data"])
-            
-            logger.info(f"Fetching workouts from InfluxDB (date filter: {filter_date})")
-            records = _fetch_workouts_from_influx()
+            if not filter_date and not before_date and _workout_cache["data"] and _workout_cache["expires"] and now < _workout_cache["expires"]:
+                records = _workout_cache["data"]
+            else:
+                logger.info(f"Fetching workouts from InfluxDB (date: {filter_date}, before: {before_date})")
+                records = _fetch_workouts_from_influx()
             
             if not records:
                 return jsonify({"error": "No workouts from InfluxDB"}), 404
             
-            # Update cache (only if no date filter)
-            if not filter_date:
+            # Update cache (only if no filters)
+            if not filter_date and not before_date:
                 _workout_cache["data"] = records
                 _workout_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
             
-            # Filter by date if specified
-            if filter_date:
+            # Filter: before_date = workouts on or before that date (descending), limit
+            if before_date:
+                records = [w for w in records if w.get('date', '') <= before_date]
+                if limit and limit > 0:
+                    records = records[:limit]
+            elif filter_date:
                 records = [w for w in records if w.get('date') == filter_date]
             
             return jsonify(records)
@@ -809,6 +821,8 @@ def manual_values():
                 .time(target_dt)
             
             write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            if metric == "weight":
+                _weight_cache.pop(date, None)
             logger.info(f"Manual value cleared: {metric} for {date}")
             return jsonify({"success": True})
         except Exception as e:
@@ -898,6 +912,14 @@ def weight():
         if not query_api:
             return jsonify({"weight": None})
         
+        # Cache GET by date (30s TTL)
+        now = datetime.now()
+        if date in _weight_cache:
+            cached, expires = _weight_cache[date]
+            if now < expires:
+                return jsonify(cached)
+            del _weight_cache[date]
+
         try:
             target_dt = datetime.strptime(date, "%Y-%m-%d")
             start_dt = target_dt - timedelta(days=7)
@@ -918,7 +940,9 @@ def weight():
                 for record in table.records:
                     val = record.get_value()
                     if val:
-                        return jsonify({"weight": float(val), "source": "manual", "date": date})
+                        resp = {"weight": float(val), "source": "manual", "date": date}
+                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                        return jsonify(resp)
 
             # 2. daily_health for this specific date (Fitbit, Apple Health, Suunto)
             query = f'''
@@ -934,7 +958,9 @@ def weight():
                 for record in table.records:
                     val = record.get_value()
                     if val:
-                        return jsonify({"weight": float(val), "source": "auto", "date": date})
+                        resp = {"weight": float(val), "source": "auto", "date": date}
+                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                        return jsonify(resp)
 
             # 3. Most recent manual weight (any date) when no data for this date (exclude if latest is deleted)
             query = f'''
@@ -951,7 +977,9 @@ def weight():
                 for record in table.records:
                     val = record.get_value()
                     if val:
-                        return jsonify({"weight": float(val), "source": "manual", "date": date})
+                        resp = {"weight": float(val), "source": "manual", "date": date}
+                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                        return jsonify(resp)
 
             # 4. Most recent daily_health weight when no data for this date
             query = f'''
@@ -966,9 +994,13 @@ def weight():
                 for record in table.records:
                     val = record.get_value()
                     if val:
-                        return jsonify({"weight": float(val), "source": "auto", "date": date})
+                        resp = {"weight": float(val), "source": "auto", "date": date}
+                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                        return jsonify(resp)
             
-            return jsonify({"weight": None, "date": date})
+            resp = {"weight": None, "date": date}
+            _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+            return jsonify(resp)
         except Exception as e:
             logger.error(f"Error fetching weight: {e}")
             return jsonify({"weight": None, "error": str(e)})
@@ -990,6 +1022,7 @@ def weight():
                 .field("weight", float(weight_val))
             
             write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            _weight_cache.pop(date, None)  # Invalidate cache
             logger.info(f"Weight saved: {weight_val} kg for {date}")
             return jsonify({"success": True})
         except Exception as e:

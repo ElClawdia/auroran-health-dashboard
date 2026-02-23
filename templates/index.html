@@ -831,7 +831,7 @@
         
         <!-- Recent Workouts -->
         <div class="chart-card">
-            <div class="chart-title">🏃 Recent Workouts</div>
+            <div class="chart-title" id="workouts-chart-title">🏃 Recent Workouts</div>
             <div id="workouts-list">
                 <div class="loading">Loading workouts...</div>
             </div>
@@ -893,7 +893,7 @@
                 return 'Yesterday';
             } else {
                 const d = new Date(dateStr + 'T00:00:00');
-                return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             }
         }
         
@@ -944,19 +944,9 @@
             prevBtn.addEventListener('click', () => changeDate(-1));
             nextBtn.addEventListener('click', () => changeDate(1));
             
-            // Click on current date: if today, show calendar; otherwise go to today
+            // Click on current date: always open calendar to pick date
             currentEl.addEventListener('click', () => {
-                if (currentViewDate === getTodayDate()) {
-                    hiddenPicker.showPicker();
-                } else {
-                    currentViewDate = getTodayDate();
-                    updateDateNavigation();
-                    Object.keys(useManual).forEach(k => useManual[k] = false);
-                    Object.keys(manualValues).forEach(k => delete manualValues[k]);
-                    document.querySelectorAll('.manual-value').forEach(el => el.classList.remove('manual-value'));
-                    loadManualValues();
-                    fetchData();
-                }
+                hiddenPicker.showPicker();
             });
             
             // Hidden date picker change
@@ -983,49 +973,41 @@
         
         async function fetchData() {
             try {
-                // Calories date = selected date
-                const caloriesDateStr = currentViewDate;
+                const date = currentViewDate;
+                const ts = Date.now();
                 
-                // Fetch health for selected date
-                const healthRes = await fetch('/api/health/today?date=' + currentViewDate);
-                const health = await healthRes.json();
+                // Parallel fetch all API data
+                const [healthRes, historyRes, recRes, pmcRes, workoutsRes, caloriesRes, weightRes] = await Promise.all([
+                    fetch('/api/health/today?date=' + date),
+                    fetch('/api/health/history?days=30&end_date=' + date),
+                    fetch('/api/recommendations/today?date=' + date),
+                    fetch('/api/pmc?days=30&end_date=' + date),
+                    fetch('/api/workouts?before_date=' + date + '&limit=10'),
+                    fetch('/api/calories?date=' + date + '&_t=' + ts),
+                    fetch('/api/weight?date=' + date + '&_t=' + ts)
+                ]);
+                
+                const [health, history, recommendation, pmc, workoutsRaw, caloriesData, weightData] = await Promise.all([
+                    healthRes.json(),
+                    historyRes.json(),
+                    recRes.json(),
+                    pmcRes.json(),
+                    workoutsRes.json(),
+                    caloriesRes.json(),
+                    weightRes.json()
+                ]);
+                const workouts = Array.isArray(workoutsRaw) ? workoutsRaw : [];
+                
                 updateHealthCards(health);
-                
-                // Fetch history (30 days ending at selected date)
-                const historyRes = await fetch('/api/health/history?days=30&end_date=' + currentViewDate);
-                const history = await historyRes.json();
                 updateChart(history);
-                
-                // Fetch recommendation
-                const recRes = await fetch('/api/recommendations/today?date=' + currentViewDate);
-                const recommendation = await recRes.json();
                 updateRecommendation(recommendation);
-                
-                // Fetch PMC (Training Load) - 30 days ending at selected date
-                const pmcRes = await fetch('/api/pmc?days=30&end_date=' + currentViewDate);
-                const pmc = await pmcRes.json();
                 updatePMC(pmc);
-                
-                // Fetch weekly plan
                 const weekPlan = recommendation.alternatives ? generateWeekPlan(recommendation) : [];
                 updateWeekPlan(weekPlan);
-                
-                // Fetch recent workouts (not filtered by date - shows all recent workouts)
-                const workoutsRes = await fetch('/api/workouts');
-                const workouts = await workoutsRes.json();
                 updateWorkouts(workouts);
-                
-                // Fetch calories for selected date (add timestamp to prevent caching)
-                const caloriesRes = await fetch('/api/calories?date=' + caloriesDateStr + '&_t=' + Date.now());
-                const caloriesData = await caloriesRes.json();
                 updateCalories(caloriesData);
-                
-                // Fetch weight for selected date
-                const weightRes = await fetch('/api/weight?date=' + currentViewDate + '&_t=' + Date.now());
-                const weightData = await weightRes.json();
                 updateWeight(weightData);
                 
-                // Update timestamp
                 document.getElementById('last-updated').textContent = 
                     'Updated: ' + new Date().toLocaleTimeString();
                     
@@ -1508,8 +1490,17 @@
             });
         }
         
+        function formatWorkoutsHeaderDate(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
         function updateWorkouts(workouts) {
             const container = document.getElementById('workouts-list');
+            const titleEl = document.getElementById('workouts-chart-title');
+            if (titleEl) {
+                titleEl.textContent = '🏃 Recent Workouts ' + formatWorkoutsHeaderDate(currentViewDate);
+            }
             
             if (!workouts || workouts.length === 0) {
                 container.innerHTML = '<div class="loading">No workouts yet. Add your first workout!</div>';
@@ -1847,16 +1838,16 @@
                 let dates = [];
                 
                 if (['ctl', 'atl', 'tsb'].includes(metric)) {
-                    // PMC data
-                    const response = await fetch('/api/pmc?days=30');
+                    // PMC data (use currentViewDate)
+                    const response = await fetch('/api/pmc?days=30&end_date=' + currentViewDate);
                     const pmcData = await response.json();
                     if (pmcData.chart) {
                         dates = pmcData.chart.dates || [];
                         data = pmcData.chart[metric] || [];
                     }
                 } else {
-                    // Health history data
-                    const response = await fetch('/api/health/history?days=30');
+                    // Health history data (use currentViewDate so trend matches view)
+                    const response = await fetch('/api/health/history?days=30&end_date=' + currentViewDate);
                     const historyData = await response.json();
                     dates = historyData.dates || [];
                     data = historyData[config.field] || [];

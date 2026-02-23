@@ -143,42 +143,68 @@ class FitbitClient:
 
     def get_steps(self, date: str) -> int | None:
         """Get total steps for date. Returns int or None."""
+        result = self.get_steps_range(date, date)
+        return result.get(date) if result else None
+
+    def get_steps_range(self, start_date: str, end_date: str) -> dict[str, int]:
+        """Get steps for date range. Max 1095 days per request. Returns {date: steps}."""
         data = self._request(
-            f"/1/user/-/activities/steps/date/{date}/1d.json"
+            f"/1/user/-/activities/steps/date/{start_date}/{end_date}.json"
         )
+        out: dict[str, int] = {}
         if data and "activities-steps" in data:
             for entry in data["activities-steps"]:
-                if entry.get("dateTime") == date:
+                dt = entry.get("dateTime")
+                if dt and start_date <= dt <= end_date:
                     try:
-                        return int(entry.get("value", 0))
+                        out[dt] = int(entry.get("value", 0))
                     except (ValueError, TypeError):
-                        return None
-        return None
+                        pass
+        return out
 
     def get_sleep(self, date: str) -> dict | None:
         """Get sleep summary for date. Returns sleep duration in minutes or None."""
+        result = self.get_sleep_range(date, date)
+        return result.get(date) if result else None
+
+    def get_sleep_range(self, start_date: str, end_date: str) -> dict[str, float]:
+        """Get sleep minutes by date. Max 100 days per request. Returns {date: hours}."""
         data = self._request(
-            f"/1.2/user/-/sleep/date/{date}/{date}.json"
+            f"/1.2/user/-/sleep/date/{start_date}/{end_date}.json"
         )
+        out: dict[str, float] = {}
         if not data or "sleep" not in data:
-            return None
-        total_minutes = 0
+            return out
         for entry in data["sleep"]:
-            if entry.get("isMainSleep") and entry.get("dateOfSleep", "").startswith(date):
-                total_minutes += int(entry.get("minutesAsleep", 0))
-        return {"minutes": total_minutes} if total_minutes else None
+            if not entry.get("isMainSleep"):
+                continue
+            ds = entry.get("dateOfSleep", "")
+            if not ds.startswith("20"):  # yyyy-mm-dd
+                continue
+            dt = ds[:10]
+            if start_date <= dt <= end_date:
+                mins = int(entry.get("minutesAsleep", 0))
+                if mins:
+                    out[dt] = out.get(dt, 0) + mins / 60.0
+        return out
 
     def get_resting_hr(self, date: str) -> float | None:
         """Get resting heart rate for date."""
+        result = self.get_resting_hr_range(date, date)
+        return result.get(date) if result else None
+
+    def get_resting_hr_range(self, start_date: str, end_date: str) -> dict[str, float]:
+        """Get resting HR by date. Max 1 year per request. Returns {date: resting_hr}."""
         data = self._request(
-            f"/1/user/-/activities/heart/date/{date}/1d.json"
+            f"/1/user/-/activities/heart/date/{start_date}/{end_date}.json"
         )
+        out: dict[str, float] = {}
         if not data:
-            return None
-        # activities-heart contains restingHeartRate in the first entry
+            return out
         for entry in data.get("activities-heart", []):
-            if entry.get("dateTime") == date:
+            dt = entry.get("dateTime")
+            if dt and start_date <= dt <= end_date:
                 resting = entry.get("value", {}).get("restingHeartRate")
                 if resting is not None:
-                    return float(resting)
-        return None
+                    out[dt] = float(resting)
+        return out

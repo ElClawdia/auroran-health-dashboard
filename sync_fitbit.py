@@ -78,10 +78,9 @@ def sync_fitbit_to_influxdb(days: int = 7) -> bool:
 
     # Fetch weight (Fitbit API max 31 days per request)
     weight_by_date: dict[str, float] = {}
-    chunk_days = 31
     chunk_start = today - timedelta(days=days)
     while chunk_start <= today:
-        chunk_end = min(chunk_start + timedelta(days=chunk_days - 1), today)
+        chunk_end = min(chunk_start + timedelta(days=30), today)
         logs = client.get_weight_range(
             chunk_start.isoformat(),
             chunk_end.isoformat(),
@@ -100,29 +99,46 @@ def sync_fitbit_to_influxdb(days: int = 7) -> bool:
     for dt_str, w in weight_by_date.items():
         daily[dt_str]["weight"] = round(w, 2)
 
-    for i in range(days):
-        d = (today - timedelta(days=i)).isoformat()
-        if d not in daily:
-            daily[d] = {}
-
-        if "steps" not in daily[d]:
-            steps = client.get_steps(d)
+    # Fetch steps in chunks (max 1095 days per request)
+    chunk_start = today - timedelta(days=days)
+    while chunk_start <= today:
+        chunk_end = min(chunk_start + timedelta(days=1094), today)
+        for dt, steps in client.get_steps_range(
+            chunk_start.isoformat(), chunk_end.isoformat()
+        ).items():
+            if dt not in daily:
+                daily[dt] = {}
             if steps is not None:
-                daily[d]["steps"] = steps
+                daily[dt]["steps"] = steps
+        chunk_start = chunk_end + timedelta(days=1)
 
-        if "sleep_duration_hours" not in daily[d]:
-            sleep_data = client.get_sleep(d)
-            if sleep_data and sleep_data.get("minutes"):
-                daily[d]["sleep_duration_hours"] = round(
-                    sleep_data["minutes"] / 60.0, 3
-                )
+    # Fetch sleep in chunks (max 100 days per request)
+    chunk_start = today - timedelta(days=days)
+    while chunk_start <= today:
+        chunk_end = min(chunk_start + timedelta(days=99), today)
+        for dt, hours in client.get_sleep_range(
+            chunk_start.isoformat(), chunk_end.isoformat()
+        ).items():
+            if dt not in daily:
+                daily[dt] = {}
+            if hours:
+                daily[dt]["sleep_duration_hours"] = round(hours, 3)
+        chunk_start = chunk_end + timedelta(days=1)
 
-        if "resting_hr" not in daily[d]:
-            rhr = client.get_resting_hr(d)
+    # Fetch resting HR in chunks (max 365 days per request)
+    chunk_start = today - timedelta(days=days)
+    while chunk_start <= today:
+        chunk_end = min(chunk_start + timedelta(days=364), today)
+        for dt, rhr in client.get_resting_hr_range(
+            chunk_start.isoformat(), chunk_end.isoformat()
+        ).items():
+            if dt not in daily:
+                daily[dt] = {}
             if rhr is not None:
-                daily[d]["resting_hr"] = round(rhr, 2)
+                daily[dt]["resting_hr"] = round(rhr, 2)
+        chunk_start = chunk_end + timedelta(days=1)
 
-    # Write to InfluxDB
+    # Batch write to InfluxDB
     influx = InfluxDBClient(
         url=INFLUXDB_URL,
         token=INFLUXDB_TOKEN,
@@ -130,7 +146,7 @@ def sync_fitbit_to_influxdb(days: int = 7) -> bool:
     )
     write_api = influx.write_api(write_options=SYNCHRONOUS)
 
-    written = 0
+    points = []
     for date_str, fields in sorted(daily.items()):
         if not fields:
             continue
@@ -140,10 +156,16 @@ def sync_fitbit_to_influxdb(days: int = 7) -> bool:
         point = Point("daily_health").tag("date", date_str).time(ts)
         for key, val in fields.items():
             point = point.field(key, val)
-        write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
-        written += 1
-        summary = ", ".join(f"{k}={v}" for k, v in fields.items())
-        print(f"  {date_str}: {summary}")
+        points.append(point)
+
+    if points:
+        write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=points)
+
+    written = len(points)
+    for date_str, fields in sorted(daily.items()):
+        if fields:
+            summary = ", ".join(f"{k}={v}" for k, v in fields.items())
+            print(f"  {date_str}: {summary}")
 
     write_api.close()
     influx.close()
