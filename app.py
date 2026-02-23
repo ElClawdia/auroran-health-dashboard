@@ -143,7 +143,7 @@ _workout_index_lock = threading.Lock()
 WORKOUT_LOOKBACK_DAYS = 90
 HEALTH_LOOKBACK_DAYS = 90
 PMC_MIN_LOOKBACK_DAYS = 120
-WEIGHT_LOOKBACK_DAYS = 180
+WEIGHT_LOOKBACK_DAYS = 3650  # Use last known weight for long gaps
 
 # Generate mock data for demo mode
 def get_mock_health_today():
@@ -694,7 +694,33 @@ def _fetch_workouts_from_influx(before_date: str | None = None):
         key=lambda x: (x.get('date', ''), x.get('start_time', '')), 
         reverse=True
     )
-    return result
+    return _dedupe_workouts(result)
+
+
+def _workout_dedupe_key(workout: dict) -> str:
+    """Return a stable key to de-duplicate workouts from multiple sources."""
+    strava_id = workout.get("strava_id")
+    if strava_id:
+        return f"strava:{strava_id}"
+    return "|".join([
+        str(workout.get("date", "")),
+        str(workout.get("start_time", "")),
+        str(workout.get("name", "")),
+        str(workout.get("type", "")),
+    ])
+
+
+def _dedupe_workouts(records: list[dict]) -> list[dict]:
+    """De-duplicate workouts while keeping original order."""
+    seen = set()
+    out = []
+    for w in records:
+        key = _workout_dedupe_key(w)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(w)
+    return out
 
 
 def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
@@ -734,7 +760,8 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
     cleaned = []
     for row in records:
         cleaned.append({k: (None if pd.isna(v) else v) for k, v in row.items()})
-    return cleaned
+    deduped = _dedupe_workouts(cleaned)
+    return deduped[:limit]
 
 
 def _load_workout_index() -> None:
@@ -781,6 +808,7 @@ def _load_workout_index() -> None:
         key=lambda x: (x.get("date", ""), x.get("start_time", "")),
         reverse=True,
     )
+    data = _dedupe_workouts(data)
     with _workout_index_lock:
         _workout_index["data"] = data
         _workout_index["loaded_at"] = datetime.now()
