@@ -1492,6 +1492,67 @@ def _dash_fetch_weight(date: str) -> dict:
         return {"weight": None, "date": date}
 
 
+@app.route('/api/dashboard/quick')
+@login_required
+def api_dashboard_quick():
+    """Phase 1: fast data - health, recommendation, calories, weight. Renders first."""
+    date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    now = datetime.now()
+    cache_key = f"quick:{date}"
+    if cache_key in _dashboard_cache:
+        cached, expires = _dashboard_cache[cache_key]
+        if now < expires:
+            return jsonify(cached)
+        del _dashboard_cache[cache_key]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {
+            ex.submit(_dash_fetch_health_today, date): "health",
+            ex.submit(_dash_fetch_recommendations, date): "recommendation",
+            ex.submit(_dash_fetch_calories, date): "calories",
+            ex.submit(_dash_fetch_weight, date): "weight",
+        }
+        out = {}
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                out[key] = fut.result()
+            except Exception as e:
+                logger.error(f"Dashboard quick {key} error: {e}")
+                out[key] = {"error": str(e)}
+    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=CACHE_TTL_SECONDS))
+    return jsonify(out)
+
+
+@app.route('/api/dashboard/charts')
+@login_required
+def api_dashboard_charts():
+    """Phase 2: charts - health history, PMC. Loads after quick."""
+    date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    days = request.args.get('days', 10, type=int)
+    now = datetime.now()
+    cache_key = f"charts:{date}:{days}"
+    if cache_key in _dashboard_cache:
+        cached, expires = _dashboard_cache[cache_key]
+        if now < expires:
+            return jsonify(cached)
+        del _dashboard_cache[cache_key]
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futures = {
+            ex.submit(_dash_fetch_health_history, days, date): "history",
+            ex.submit(_dash_fetch_pmc, days, date): "pmc",
+        }
+        out = {}
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                out[key] = fut.result()
+            except Exception as e:
+                logger.error(f"Dashboard charts {key} error: {e}")
+                out[key] = {"error": str(e)}
+    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=CACHE_TTL_SECONDS))
+    return jsonify(out)
+
+
 @app.route('/api/dashboard')
 @login_required
 def api_dashboard():

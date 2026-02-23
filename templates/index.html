@@ -972,62 +972,70 @@
         }
         
         let fetchAbortController = null;
-        const FETCH_TIMEOUT_MS = 15000;  // 15s - fail fast if server is slow
+        const FETCH_TIMEOUT_MS = 20000;  // 20s per phase
+        async function fetchJson(url, signal) {
+            const res = await fetch(url, { signal });
+            const text = await res.text();
+            let data;
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch (e) {
+                const preview = text.slice(0, 150).replace(/</g, '&lt;');
+                throw new Error('Invalid JSON. ' + (res.ok ? '' : 'Status: ' + res.status + '. ') + 'Response: ' + preview);
+            }
+            if (!res.ok) throw new Error(data.error || 'Request failed (status ' + res.status + ')');
+            return data;
+        }
         async function fetchData() {
             if (fetchAbortController) fetchAbortController.abort();
             fetchAbortController = new AbortController();
-            let timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
             const date = currentViewDate;
+            const signal = fetchAbortController.signal;
+            document.getElementById('error-container').innerHTML = '';
             try {
-                // 10-day window for fast loads; single combined request
-                const res = await fetch('/api/dashboard?date=' + date + '&days=10', {
-                    signal: fetchAbortController.signal
-                });
+                // Phase 1: Quick - health, recommendation, calories, weight (fastest)
+                let timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
+                const quick = await fetchJson('/api/dashboard/quick?date=' + date, signal);
                 clearTimeout(timeoutId);
-                const text = await res.text();
-                let data;
-                try {
-                    data = text ? JSON.parse(text) : {};
-                } catch (e) {
-                    const preview = text.slice(0, 150).replace(/</g, '&lt;');
-                    throw new Error('Server returned invalid JSON. ' + (res.ok ? '' : 'Status: ' + res.status + '. ') + 'Response: ' + preview);
-                }
-                if (!res.ok) {
-                    throw new Error(data.error || 'Failed to load dashboard (status ' + res.status + ')');
-                }
-                // Ignore response if user changed date while fetching
                 if (date !== currentViewDate) return;
-                
-                const health = data.health || {};
-                const history = data.history || {};
-                const recommendation = data.recommendation || {};
-                const pmc = data.pmc || {};
-                const workoutsRaw = data.workouts;
-                const caloriesData = data.calories || {};
-                const weightData = data.weight || {};
-                const workouts = Array.isArray(workoutsRaw) ? workoutsRaw : [];
-                
-                updateHealthCards(health);
-                updateChart(history);
-                updateRecommendation(recommendation);
-                updatePMC(pmc);
-                const weekPlan = recommendation.alternatives ? generateWeekPlan(recommendation) : [];
+                updateHealthCards(quick.health || {});
+                updateRecommendation(quick.recommendation || {});
+                updateCalories(quick.calories || {});
+                updateWeight(quick.weight || {});
+                const weekPlan = (quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : [];
                 updateWeekPlan(weekPlan);
+                document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+
+                // Phase 2: Charts - history, PMC
+                timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
+                const charts = await fetchJson('/api/dashboard/charts?date=' + date + '&days=10', signal);
+                clearTimeout(timeoutId);
+                if (date !== currentViewDate) return;
+                updateChart(charts.history || {});
+                updatePMC(charts.pmc || {});
+                document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+
+                // Phase 3: Workouts (slowest - can scan many days)
+                timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
+                const workoutsRes = await fetch('/api/workouts?before_date=' + date + '&limit=10', { signal });
+                clearTimeout(timeoutId);
+                if (date !== currentViewDate) return;
+                let workouts = [];
+                if (workoutsRes.ok) {
+                    try {
+                        const raw = await workoutsRes.json();
+                        workouts = Array.isArray(raw) ? raw : [];
+                    } catch (_) { }
+                }
                 updateWorkouts(workouts);
-                updateCalories(caloriesData);
-                updateWeight(weightData);
-                
-                document.getElementById('last-updated').textContent = 
-                    'Updated: ' + new Date().toLocaleTimeString();
-                    
+                document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
             } catch (error) {
-                if (timeoutId) clearTimeout(timeoutId);
                 if (error.name === 'AbortError') return;
                 const msg = error.message || String(error);
                 const isTimeout = msg.includes('aborted') || msg.includes('Abort');
                 console.error('Error fetching data:', error);
-                document.getElementById('error-container').innerHTML = 
-                    `<div class="error">Error loading data: ${isTimeout ? 'Request timed out (server too slow). Try a more recent date.' : msg}</div>`;
+                document.getElementById('error-container').innerHTML =
+                    '<div class="error">Error loading data: ' + (isTimeout ? 'Request timed out. Try a more recent date.' : msg) + '</div>';
             }
         }
         
