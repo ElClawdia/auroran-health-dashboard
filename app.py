@@ -1077,9 +1077,9 @@ def calories():
     """Get calories burned for today (default) or specified date.
     
     Sources (in priority order):
-    1. daily_health.active_calories (from Apple Health import)
-    2. daily_health.total_calories (fallback)
-    3. workout_cache/workouts calories (from Strava sync)
+    1. workout_cache/workouts calories (preferred if available)
+    2. daily_health.active_calories (Apple Health)
+    3. daily_health.total_calories (fallback)
     """
     date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
     
@@ -1087,6 +1087,25 @@ def calories():
         return jsonify({"calories": 0, "date": date})
     
     try:
+        # Prefer workout calories when available
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: -30d)
+          |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
+          |> filter(fn: (r) => r.date == "{date}")
+          |> filter(fn: (r) => r._field == "calories")
+          |> sum()
+        '''
+        result = query_api.query(query)
+        workout_total = 0.0
+        for table in result:
+            for record in table.records:
+                val = record.get_value()
+                if val:
+                    workout_total += float(val)
+        if workout_total > 0:
+            return jsonify({"calories": int(workout_total), "date": date, "source": "workouts"})
+
         # Prefer active calories from daily_health (Apple Health import)
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=1)
@@ -1120,25 +1139,7 @@ def calories():
         if total_val is not None:
             return jsonify({"calories": int(total_val), "date": date, "source": "apple_health_total"})
         
-        # Fall back to workout calories from Strava
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -30d)
-          |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
-          |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "calories")
-          |> sum()
-        '''
-        result = query_api.query(query)
-        
-        total_calories = 0
-        for table in result:
-            for record in table.records:
-                val = record.get_value()
-                if val:
-                    total_calories += float(val)
-        
-        return jsonify({"calories": int(total_calories), "date": date, "source": "strava"})
+        return jsonify({"calories": 0, "date": date, "source": "none"})
     except Exception as e:
         logger.error(f"Error fetching calories: {e}")
         return jsonify({"calories": 0, "date": date, "error": str(e)})
@@ -1522,6 +1523,24 @@ def _dash_fetch_calories(date: str) -> dict:
     if not query_api:
         return {"calories": 0, "date": date}
     try:
+        # Prefer workout calories when available (more realistic for activity)
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: -30d)
+          |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
+          |> filter(fn: (r) => r.date == "{date}")
+          |> filter(fn: (r) => r._field == "calories")
+          |> sum()
+        '''
+        workout_total = 0.0
+        for table in query_api.query(query):
+            for rec in table.records:
+                v = rec.get_value()
+                if v:
+                    workout_total += float(v)
+        if workout_total > 0:
+            return {"calories": int(workout_total), "date": date, "source": "workouts"}
+
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=1)
         stop_dt = target_dt + timedelta(days=1)
@@ -1549,21 +1568,7 @@ def _dash_fetch_calories(date: str) -> dict:
             return {"calories": int(active_val), "date": date, "source": "apple_health_active"}
         if total_val is not None:
             return {"calories": int(total_val), "date": date, "source": "apple_health_total"}
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -30d)
-          |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
-          |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "calories")
-          |> sum()
-        '''
-        total = 0
-        for table in query_api.query(query):
-            for rec in table.records:
-                v = rec.get_value()
-                if v:
-                    total += float(v)
-        return {"calories": int(total), "date": date, "source": "strava"}
+        return {"calories": 0, "date": date, "source": "none"}
     except Exception as e:
         logger.error(f"Dashboard calories error: {e}")
         return {"calories": 0, "date": date}
