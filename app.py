@@ -759,22 +759,27 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
     field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
     date_filter = f'|> filter(fn: (r) => r.date <= "{before_date}")' if before_date else ""
     # Keep range minimal for speed; date tag filter enforces cutoff
-    query = f'''
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{WORKOUT_LOOKBACK_DAYS}d)
-      |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
-      |> filter(fn: (r) => {field_filter})
-      {date_filter}
-      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-      |> keep(columns: ["_time", "date", "type", {", ".join([f'"{f}"' for f in fields])}])
-      |> sort(columns: ["date", "start_time"], desc: true)
-      |> limit(n: {limit})
-    '''
-    result = query_api.query_data_frame(query)
-    if isinstance(result, list):
-        if len(result) == 0:
-            return []
-        result = pd.concat(result, ignore_index=True)
+    result = pd.DataFrame()
+    for measurement in ["workout_cache", "workouts"]:
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: -{WORKOUT_LOOKBACK_DAYS}d)
+          |> filter(fn: (r) => r._measurement == "{measurement}")
+          |> filter(fn: (r) => {field_filter})
+          {date_filter}
+          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+          |> keep(columns: ["_time", "date", "type", {", ".join([f'"{f}"' for f in fields])}])
+          |> sort(columns: ["date", "start_time"], desc: true)
+          |> limit(n: {limit})
+        '''
+        result = query_api.query_data_frame(query)
+        if isinstance(result, list):
+            if len(result) == 0:
+                result = pd.DataFrame()
+            else:
+                result = pd.concat(result, ignore_index=True)
+        if not result.empty:
+            break
     if result.empty:
         return []
 
@@ -873,6 +878,11 @@ def workouts():
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
+            # Fast path for dashboard: limited query (avoid index load)
+            if before_date and limit and limit <= 10:
+                records = _fetch_workouts_limited(before_date, limit)
+                return jsonify(records)
+
             # Fast path: use in-memory index for date-filtered requests
             if before_date or filter_date:
                 index = _ensure_workout_index_loaded()
