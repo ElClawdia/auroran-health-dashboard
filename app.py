@@ -131,6 +131,7 @@ _weight_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expi
 _dashboard_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
 CACHE_TTL_SECONDS = 30  # 30 seconds - quick refresh after syncing
 WORKOUT_INDEX_TTL_SECONDS = 600  # 10 minutes
+WORKOUT_INDEX_RANGE_DAYS = 42
 _workout_index: dict[str, object] = {
     "data": None,        # list of workouts
     "loading": False,
@@ -140,8 +141,8 @@ _workout_index: dict[str, object] = {
 _workout_index_lock = threading.Lock()
 
 # Dashboard lookback windows (keep small for speed)
-WORKOUT_LOOKBACK_DAYS = 90
-HEALTH_LOOKBACK_DAYS = 90
+WORKOUT_LOOKBACK_DAYS = 42
+HEALTH_LOOKBACK_DAYS = 42
 PMC_MIN_LOOKBACK_DAYS = 120
 WEIGHT_LOOKBACK_DAYS = 3650  # Use last known weight for long gaps
 
@@ -649,12 +650,12 @@ def _fetch_workouts_from_influx(before_date: str | None = None):
     now = datetime.now()
     days_back = WORKOUT_LOOKBACK_DAYS
     cutoff = (now - timedelta(days=days_back)).strftime('%Y-%m-%d')
-    # Cap range for speed: 90d for recent, max 365d for old dates (avoids slow 4000d scans)
+    # Cap range for speed: only load last 42 days
     if before_date:
         try:
             target = datetime.strptime(before_date, "%Y-%m-%d").date()
             days_ago = (now.date() - target).days
-            range_days = days_back if days_ago <= days_back else 365
+            range_days = days_back
         except ValueError:
             range_days = days_back
     else:
@@ -735,10 +736,10 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
     ]
     field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
     date_filter = f'|> filter(fn: (r) => r.date <= "{before_date}")' if before_date else ""
-    # Keep range moderate for speed; date tag filter enforces cutoff
+    # Keep range minimal for speed; date tag filter enforces cutoff
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -365d)
+      |> range(start: -{WORKOUT_LOOKBACK_DAYS}d)
       |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
       |> filter(fn: (r) => {field_filter})
       {date_filter}
@@ -781,7 +782,7 @@ def _load_workout_index() -> None:
     field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -4000d)
+      |> range(start: -{WORKOUT_INDEX_RANGE_DAYS}d)
       |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
       |> filter(fn: (r) => {field_filter})
     '''
@@ -1934,10 +1935,5 @@ def trends():
 
 
 if __name__ == '__main__':
-    # Preload workout index so workouts are instant after startup
-    if query_api:
-        logger.info("Preloading workout index (may take a bit on startup)...")
-        _load_workout_index()
-        logger.info("Workout index ready.")
     logger.info(f"Starting Health Dashboard on port {FLASK_PORT}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
