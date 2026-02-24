@@ -1057,8 +1057,8 @@ def workouts():
                         resp.headers["X-Workouts-Stale"] = "true"
                     return resp
                 _refresh_recent_workouts_cache_async(before_date)
-                resp = jsonify({"loading": True})
-                resp.status_code = 503
+                resp = jsonify([])
+                resp.headers["X-Workouts-Stale"] = "true"
                 resp.headers["Retry-After"] = "2"
                 return resp
 
