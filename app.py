@@ -1077,8 +1077,9 @@ def calories():
     """Get calories burned for today (default) or specified date.
     
     Sources (in priority order):
-    1. daily_health.total_calories (from Apple Health import - basal + active)
-    2. workout_cache/workouts calories (from Strava sync)
+    1. daily_health.active_calories (from Apple Health import)
+    2. daily_health.total_calories (fallback)
+    3. workout_cache/workouts calories (from Strava sync)
     """
     date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
     
@@ -1086,7 +1087,7 @@ def calories():
         return jsonify({"calories": 0, "date": date})
     
     try:
-        # First try to get total calories from daily_health (Apple Health import)
+        # Prefer active calories from daily_health (Apple Health import)
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=1)
         stop_dt = target_dt + timedelta(days=1)
@@ -1096,16 +1097,28 @@ def calories():
           |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT23:59:59Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "total_calories")
+          |> filter(fn: (r) => r._field == "active_calories" or r._field == "total_calories")
           |> last()
         '''
         result = query_api.query(query)
         
+        active_val = None
+        total_val = None
         for table in result:
             for record in table.records:
+                field = record.get_field()
                 val = record.get_value()
-                if val:
-                    return jsonify({"calories": int(val), "date": date, "source": "apple_health"})
+                if val is None:
+                    continue
+                if field == "active_calories":
+                    active_val = float(val)
+                elif field == "total_calories":
+                    total_val = float(val)
+
+        if active_val is not None:
+            return jsonify({"calories": int(active_val), "date": date, "source": "apple_health_active"})
+        if total_val is not None:
+            return jsonify({"calories": int(total_val), "date": date, "source": "apple_health_total"})
         
         # Fall back to workout calories from Strava
         query = f'''
@@ -1517,14 +1530,25 @@ def _dash_fetch_calories(date: str) -> dict:
           |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT23:59:59Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "total_calories")
+          |> filter(fn: (r) => r._field == "active_calories" or r._field == "total_calories")
           |> last()
         '''
+        active_val = None
+        total_val = None
         for table in query_api.query(query):
             for rec in table.records:
+                field = rec.get_field()
                 val = rec.get_value()
-                if val:
-                    return {"calories": int(val), "date": date, "source": "apple_health"}
+                if val is None:
+                    continue
+                if field == "active_calories":
+                    active_val = float(val)
+                elif field == "total_calories":
+                    total_val = float(val)
+        if active_val is not None:
+            return {"calories": int(active_val), "date": date, "source": "apple_health_active"}
+        if total_val is not None:
+            return {"calories": int(total_val), "date": date, "source": "apple_health_total"}
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: -30d)
