@@ -1564,9 +1564,10 @@ def _get_workout_calories(date: str) -> float:
     return total
 
 
-def _get_bmr_calories_for_user(date: str) -> tuple[float | None, dict]:
+def _get_bmr_calories_for_user(date: str, user: dict | None = None) -> tuple[float | None, dict]:
     """Return (bmr, meta) using user profile + weight for date."""
-    user = get_current_user()
+    if user is None:
+        user = get_current_user()
     if not user:
         return None, {"reason": "no_user"}
 
@@ -1596,13 +1597,13 @@ def _get_bmr_calories_for_user(date: str) -> tuple[float | None, dict]:
     }
 
 
-def _dash_fetch_calories(date: str) -> dict:
+def _dash_fetch_calories(date: str, user: dict | None = None) -> dict:
     """Fetch calories. Thread-safe."""
     if not query_api:
         return {"calories": 0, "date": date}
     try:
         workout_total = _get_workout_calories(date)
-        bmr, meta = _get_bmr_calories_for_user(date)
+        bmr, meta = _get_bmr_calories_for_user(date, user=user)
         if bmr is not None:
             total = bmr + workout_total if workout_total > 0 else bmr
             return {
@@ -1758,6 +1759,7 @@ def _dash_fetch_weight(date: str) -> dict:
 def api_dashboard_quick():
     """Phase 1: fast data - health, recommendation, calories, weight. Renders first."""
     date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    user = get_current_user()
     now = datetime.now()
     cache_key = f"quick:{date}"
     if cache_key in _dashboard_cache:
@@ -1769,7 +1771,7 @@ def api_dashboard_quick():
         futures = {
             ex.submit(_dash_fetch_health_today, date): "health",
             ex.submit(_dash_fetch_recommendations, date): "recommendation",
-            ex.submit(_dash_fetch_calories, date): "calories",
+            ex.submit(_dash_fetch_calories, date, user): "calories",
             ex.submit(_dash_fetch_weight, date): "weight",
         }
         out = {}

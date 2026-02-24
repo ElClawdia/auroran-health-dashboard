@@ -1069,7 +1069,7 @@
                 return; // Keep the manual calorie value
             }
             
-            if (el && data.calories) {
+            if (el && data.calories !== undefined && data.calories !== null) {
                 el.textContent = data.calories.toLocaleString() + ' kcal';
             } else if (el) {
                 el.textContent = '--';
