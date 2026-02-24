@@ -37,7 +37,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_PROFILE_EXTS = {"png", "jpg", "jpeg", "webp"}
 RECENT_WORKOUTS_CACHE_FILE = log_dir / "recent_workouts_cache.json"
 RECENT_WORKOUTS_CACHE_TTL_SECONDS = 300
-ENABLE_INFLUX_WORKOUT_REFRESH = os.getenv("ENABLE_INFLUX_WORKOUT_REFRESH", "0") == "1"
+ENABLE_INFLUX_WORKOUT_REFRESH = os.getenv("ENABLE_INFLUX_WORKOUT_REFRESH", "1") == "1"
 
 # Setup logging
 logging.basicConfig(
@@ -257,8 +257,6 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
     filtered = sorted(filtered, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
     stale = True
     if loaded_at and (datetime.now() - loaded_at).total_seconds() < RECENT_WORKOUTS_CACHE_TTL_SECONDS:
-        stale = False
-    if not ENABLE_INFLUX_WORKOUT_REFRESH:
         stale = False
     return filtered[:limit], (stale or loading)
 

@@ -1123,7 +1123,7 @@
                 const raw = await workoutsRes.json();
                 workouts = Array.isArray(raw) ? raw : [];
             } catch (_) { }
-            updateWorkouts(workouts);
+            updateWorkouts(workouts, isStale && workouts.length === 0);
             document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
             if (workouts.length > 0) {
                 workoutsRetryCount = 0;
@@ -1658,7 +1658,7 @@
             return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         }
 
-        function updateWorkouts(workouts) {
+        function updateWorkouts(workouts, isLoading = false) {
             const container = document.getElementById('workouts-list');
             const titleEl = document.getElementById('workouts-chart-title');
             if (titleEl) {
@@ -1666,7 +1666,9 @@
             }
             
             if (!workouts || workouts.length === 0) {
-                container.innerHTML = '<div class="loading">No workouts yet. Add your first workout!</div>';
+                container.innerHTML = isLoading
+                    ? '<div class="loading">Loading workouts...</div>'
+                    : '<div class="loading">No workouts yet. Add your first workout!</div>';
                 return;
             }
             
