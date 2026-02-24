@@ -834,6 +834,16 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
             else:
                 result = pd.concat(result, ignore_index=True)
         if not result.empty:
+            # If cache results are stale, try workouts measurement too
+            if measurement == "workout_cache" and before_date:
+                try:
+                    max_date = str(result["date"].max())
+                    target = datetime.strptime(before_date, "%Y-%m-%d").date()
+                    latest = datetime.strptime(max_date, "%Y-%m-%d").date()
+                    if (target - latest).days > 7:
+                        continue
+                except Exception:
+                    pass
             break
     if result.empty:
         return []
