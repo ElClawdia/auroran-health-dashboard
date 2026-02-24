@@ -1649,10 +1649,11 @@ def _dash_fetch_weight(date: str) -> dict:
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=7)
         weight_start_dt = target_dt - timedelta(days=WEIGHT_LOOKBACK_DAYS)
+        stop_dt = target_dt + timedelta(days=1)
         # 1. Manual for this date
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "manual_values")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date == "{date}")
@@ -1668,7 +1669,7 @@ def _dash_fetch_weight(date: str) -> dict:
         # 2. daily_health for this date
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date == "{date}")
@@ -1682,7 +1683,7 @@ def _dash_fetch_weight(date: str) -> dict:
         # 3. Most recent manual on/before this date (within lookback window)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "manual_values")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date <= "{date}")
@@ -1699,7 +1700,7 @@ def _dash_fetch_weight(date: str) -> dict:
         # 4. Most recent daily_health on/before this date (within lookback window)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {target_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date <= "{date}")
