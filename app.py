@@ -258,6 +258,12 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
     stale = True
     if loaded_at and (datetime.now() - loaded_at).total_seconds() < RECENT_WORKOUTS_CACHE_TTL_SECONDS:
         stale = False
+    max_date = max((w.get("date", "") for w in data), default="")
+    # If cache doesn't cover the requested date range, keep refreshing
+    if (not filtered) and max_date and target <= max_date:
+        stale = True
+    if len(filtered) < limit:
+        stale = True
     return filtered[:limit], (stale or loading)
 
 # Dashboard lookback windows (keep small for speed)
