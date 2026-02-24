@@ -115,15 +115,6 @@ planner = ExercisePlanner()
 
 _workout_index_preloaded = False
 
-
-@app.before_request
-def _preload_workout_index_once():
-    """Warm the workout index in background after the app starts."""
-    global _workout_index_preloaded
-    if not _workout_index_preloaded:
-        _workout_index_preloaded = True
-        _ensure_workout_index_loaded()
-
 # Simple in-memory cache for workouts, PMC, weight, and dashboard
 _workout_cache = {"data": None, "expires": None}
 _pmc_cache = {"data": None, "expires": None}
@@ -144,7 +135,7 @@ _workout_index_lock = threading.Lock()
 WORKOUT_LOOKBACK_DAYS = 42
 HEALTH_LOOKBACK_DAYS = 42
 PMC_MIN_LOOKBACK_DAYS = 120
-WEIGHT_LOOKBACK_DAYS = 3650  # Use last known weight for long gaps
+WEIGHT_LOOKBACK_DAYS = 42  # Never load more than 42 days at a time
 
 # Generate mock data for demo mode
 def get_mock_health_today():
@@ -1680,14 +1671,32 @@ def _dash_fetch_weight(date: str) -> dict:
                 v = rec.get_value()
                 if v:
                     return {"weight": float(v), "source": "auto", "date": date}
-        # 3. Most recent manual on/before this date (within lookback window)
+        # 3. Most recent daily_health on/before this date (within lookback window)
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> filter(fn: (r) => r._measurement == "daily_health")
+          |> filter(fn: (r) => r._field == "weight")
+          |> filter(fn: (r) => r.date <= "{date}")
+          |> group()
+          |> sort(columns: ["_time"], desc: true)
+          |> limit(n: 1)
+        '''
+        for table in query_api.query(query):
+            for rec in table.records:
+                v = rec.get_value()
+                if v:
+                    return {"weight": float(v), "source": "auto", "date": rec.values.get("date", date)}
+
+        # 4. Most recent manual on/before this date (within lookback window)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "manual_values")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date <= "{date}")
-          |> sort(columns: ["date"], desc: true)
+          |> group()
+          |> sort(columns: ["_time"], desc: true)
           |> limit(n: 1)
           |> filter(fn: (r) => r.deleted != "true")
         '''
@@ -1696,22 +1705,6 @@ def _dash_fetch_weight(date: str) -> dict:
                 v = rec.get_value()
                 if v:
                     return {"weight": float(v), "source": "manual", "date": rec.values.get("date", date)}
-
-        # 4. Most recent daily_health on/before this date (within lookback window)
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
-          |> filter(fn: (r) => r._measurement == "daily_health")
-          |> filter(fn: (r) => r._field == "weight")
-          |> filter(fn: (r) => r.date <= "{date}")
-          |> sort(columns: ["date"], desc: true)
-          |> limit(n: 1)
-        '''
-        for table in query_api.query(query):
-            for rec in table.records:
-                v = rec.get_value()
-                if v:
-                    return {"weight": float(v), "source": "auto", "date": rec.values.get("date", date)}
         return {"weight": None, "date": date}
     except Exception as e:
         logger.error(f"Dashboard weight error: {e}")
