@@ -736,7 +736,7 @@ def _fetch_workouts_from_influx(before_date: str | None = None):
         range_days = days_back
     date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
     if before_date:
-        date_filter = f'|> filter(fn: (r) => r.date <= "{before_date}")'
+        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
 
     # Try workout_cache first (optimized, fewer records)
     # Fall back to workouts measurement if cache doesn't exist
@@ -809,7 +809,10 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
         "name", "strava_id", "feeling", "intensity"
     ]
     field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
-    date_filter = f'|> filter(fn: (r) => r.date <= "{before_date}")' if before_date else ""
+    cutoff = (datetime.now() - timedelta(days=WORKOUT_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+    date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
+    if before_date:
+        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
     # Keep range minimal for speed; date tag filter enforces cutoff
     result = pd.DataFrame()
     for measurement in ["workout_cache", "workouts"]:
@@ -859,11 +862,13 @@ def _load_workout_index() -> None:
         "name", "strava_id", "feeling", "intensity"
     ]
     field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
+    cutoff = (datetime.now() - timedelta(days=WORKOUT_INDEX_RANGE_DAYS)).strftime('%Y-%m-%d')
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{WORKOUT_INDEX_RANGE_DAYS}d)
       |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
       |> filter(fn: (r) => {field_filter})
+      |> filter(fn: (r) => r.date >= "{cutoff}")
     '''
 
     workouts = defaultdict(dict)
