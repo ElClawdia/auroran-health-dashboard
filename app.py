@@ -12,6 +12,7 @@ import sys
 import secrets
 import logging
 import threading
+import json
 from zoneinfo import ZoneInfo
 from datetime import time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -34,6 +35,8 @@ log_dir.mkdir(exist_ok=True)
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_PROFILE_EXTS = {"png", "jpg", "jpeg", "webp"}
+RECENT_WORKOUTS_CACHE_FILE = log_dir / "recent_workouts_cache.json"
+RECENT_WORKOUTS_CACHE_TTL_SECONDS = 300
 
 # Setup logging
 logging.basicConfig(
@@ -125,6 +128,8 @@ _workout_index_preloaded = False
 
 # Simple in-memory cache for workouts, PMC, weight, and dashboard
 _workout_cache = {"data": None, "expires": None}
+_recent_workouts_cache = {"data": None, "loaded_at": None, "loading": False}
+_recent_workouts_lock = threading.Lock()
 _pmc_cache = {"data": None, "expires": None}
 _weight_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
 _dashboard_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
@@ -138,6 +143,73 @@ _workout_index: dict[str, object] = {
     "loading_started_at": None,
 }
 _workout_index_lock = threading.Lock()
+
+
+def _load_recent_workouts_cache_from_disk():
+    with _recent_workouts_lock:
+        if _recent_workouts_cache.get("data") is not None:
+            return
+        if RECENT_WORKOUTS_CACHE_FILE.exists():
+            try:
+                payload = json.loads(RECENT_WORKOUTS_CACHE_FILE.read_text())
+                _recent_workouts_cache["data"] = payload.get("data", [])
+                ts = payload.get("loaded_at")
+                _recent_workouts_cache["loaded_at"] = datetime.fromisoformat(ts) if ts else None
+            except Exception as e:
+                logger.warning(f"Failed to load recent workouts cache: {e}")
+
+
+def _save_recent_workouts_cache_to_disk(data: list[dict]):
+    try:
+        payload = {
+            "loaded_at": datetime.now().isoformat(),
+            "data": data,
+        }
+        RECENT_WORKOUTS_CACHE_FILE.write_text(json.dumps(payload))
+    except Exception as e:
+        logger.warning(f"Failed to save recent workouts cache: {e}")
+
+
+def _refresh_recent_workouts_cache_async(before_date: str | None):
+    with _recent_workouts_lock:
+        if _recent_workouts_cache.get("loading"):
+            return
+        _recent_workouts_cache["loading"] = True
+
+    def _worker():
+        try:
+            target = before_date or datetime.now().strftime("%Y-%m-%d")
+            records = _fetch_workouts_limited(target, 200)
+            with _recent_workouts_lock:
+                _recent_workouts_cache["data"] = records
+                _recent_workouts_cache["loaded_at"] = datetime.now()
+        except Exception as e:
+            logger.warning(f"Recent workouts cache refresh failed: {e}")
+        finally:
+            _save_recent_workouts_cache_to_disk(_recent_workouts_cache.get("data") or [])
+            with _recent_workouts_lock:
+                _recent_workouts_cache["loading"] = False
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
+    _load_recent_workouts_cache_from_disk()
+    with _recent_workouts_lock:
+        data = _recent_workouts_cache.get("data") or []
+        loaded_at = _recent_workouts_cache.get("loaded_at")
+        loading = _recent_workouts_cache.get("loading")
+
+    if not data:
+        return None, False
+
+    target = before_date or datetime.now().strftime("%Y-%m-%d")
+    filtered = [w for w in data if w.get("date", "") <= target]
+    filtered = sorted(filtered, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    stale = True
+    if loaded_at and (datetime.now() - loaded_at).total_seconds() < RECENT_WORKOUTS_CACHE_TTL_SECONDS:
+        stale = False
+    return filtered[:limit], stale or loading
 
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 42
@@ -799,7 +871,7 @@ def _dedupe_workouts(records: list[dict]) -> list[dict]:
 
 
 def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
-    """Fetch only the most recent workouts (limited) using Flux pivot + limit."""
+    """Fetch only the most recent workouts (limited) using stream query."""
     if not query_api:
         return []
 
@@ -809,59 +881,81 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
         "name", "strava_id", "feeling", "intensity"
     ]
     field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
-    cutoff = (datetime.now() - timedelta(days=WORKOUT_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
-    date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
-    if before_date:
-        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
-    # Keep range minimal for speed; date tag filter enforces cutoff
-    result = pd.DataFrame()
-    for measurement in ["workout_cache", "workouts"]:
-        query = f'''
+    def _fetch_range(measurement: str, lookback_days: int) -> list[dict]:
+        cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
+        if before_date:
+            date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
+
+        start_query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{WORKOUT_LOOKBACK_DAYS}d)
+          |> range(start: -{lookback_days}d)
+          |> filter(fn: (r) => r._measurement == "{measurement}")
+          |> filter(fn: (r) => r._field == "start_time")
+          {date_filter}
+        '''
+        start_rows = []
+        for record in query_api.query_stream(start_query):
+            start_rows.append({
+                "_time": record.get_time(),
+                "date": record.values.get("date", ""),
+                "type": record.values.get("type", ""),
+                "start_time": record.get_value(),
+            })
+        if not start_rows:
+            return []
+
+        start_rows = sorted(
+            start_rows,
+            key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+            reverse=True,
+        )[:limit]
+        time_filters = " or ".join([f'r._time == time(v: "{r["_time"].isoformat()}")' for r in start_rows])
+        if not time_filters:
+            return []
+
+        workouts = {}
+        detail_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: -{lookback_days}d)
           |> filter(fn: (r) => r._measurement == "{measurement}")
           |> filter(fn: (r) => {field_filter})
-          {date_filter}
-          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-          |> keep(columns: ["_time", "date", "type", {", ".join([f'"{f}"' for f in fields])}])
-          |> group()
-          |> sort(columns: ["date", "start_time"], desc: true)
-          |> limit(n: {limit})
+          |> filter(fn: (r) => {time_filters})
         '''
-        result = query_api.query_data_frame(query)
-        if isinstance(result, list):
-            if len(result) == 0:
-                result = pd.DataFrame()
-            else:
-                result = pd.concat(result, ignore_index=True)
-        if not result.empty:
-            # If cache results are stale, try workouts measurement too
-            if measurement == "workout_cache" and before_date:
-                try:
-                    max_date = str(result["date"].max())
-                    target = datetime.strptime(before_date, "%Y-%m-%d").date()
-                    latest = datetime.strptime(max_date, "%Y-%m-%d").date()
-                    if (target - latest).days > 7:
-                        continue
-                except Exception:
-                    pass
-            break
-    if result.empty:
-        return []
+        for record in query_api.query_stream(detail_query):
+            key = str(record.get_time())
+            entry = workouts.setdefault(
+                key,
+                {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
+            )
+            entry[record.get_field()] = record.get_value()
 
-    records = result.to_dict(orient="records")
-    # Clean NaN values
-    cleaned = []
-    for row in records:
-        cleaned.append({k: (None if pd.isna(v) else v) for k, v in row.items()})
-    # Ensure global ordering after concat
-    cleaned = sorted(
-        cleaned,
-        key=lambda x: (x.get("date", ""), x.get("start_time", "")),
-        reverse=True,
-    )
-    deduped = _dedupe_workouts(cleaned)
-    return deduped[:limit]
+        for row in start_rows:
+            key = str(row["_time"])
+            entry = workouts.setdefault(
+                key,
+                {"date": row.get("date", ""), "type": row.get("type", "")},
+            )
+            if not entry.get("start_time"):
+                entry["start_time"] = row.get("start_time", "")
+
+        records = list(workouts.values())
+        records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+        return _dedupe_workouts(records)[:limit]
+
+    for measurement in ["workout_cache", "workouts"]:
+        try:
+            records = _fetch_range(measurement, 14)
+            if len(records) >= limit:
+                return records[:limit]
+            if records:
+                wider = _fetch_range(measurement, WORKOUT_LOOKBACK_DAYS)
+                if wider:
+                    return wider[:limit]
+        except Exception:
+            continue
+
+    return []
 
 
 def _load_workout_index() -> None:
@@ -952,10 +1046,21 @@ def workouts():
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
-            # Fast path for dashboard: limited query (avoid index load)
+            # Fast path for dashboard: serve from recent cache, refresh in background
             if before_date and limit and limit <= 10:
-                records = _fetch_workouts_limited(before_date, limit)
-                return jsonify(records)
+                cached, stale = _get_recent_workouts_from_cache(before_date, limit)
+                if cached is not None:
+                    if stale:
+                        _refresh_recent_workouts_cache_async(before_date)
+                    resp = jsonify(cached)
+                    if stale:
+                        resp.headers["X-Workouts-Stale"] = "true"
+                    return resp
+                _refresh_recent_workouts_cache_async(before_date)
+                resp = jsonify({"loading": True})
+                resp.status_code = 503
+                resp.headers["Retry-After"] = "2"
+                return resp
 
             # Fast path: use in-memory index for date-filtered requests
             if before_date or filter_date:

@@ -1124,6 +1124,7 @@
                 return;
             }
             if (!workoutsRes.ok) return;
+            const isStale = workoutsRes.headers.get('X-Workouts-Stale') === 'true';
             let workouts = [];
             try {
                 const raw = await workoutsRes.json();
@@ -1131,6 +1132,13 @@
             } catch (_) { }
             updateWorkouts(workouts);
             document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+            if (isStale) {
+                setTimeout(() => {
+                    if (date === currentViewDate && fetchAbortController) {
+                        fetchWorkoutsOnly(date, fetchAbortController.signal);
+                    }
+                }, 2000);
+            }
         }
 
         async function fetchData() {
