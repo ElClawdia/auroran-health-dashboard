@@ -1601,26 +1601,39 @@ def _get_workout_calories(date: str, weight_kg: float | None = None) -> float:
     """Sum workout calories for a date. If missing, estimate from duration."""
     if not query_api:
         return 0.0
-    # Pull calories + durations for the date
+    # Pull calories + durations for the date and pivot to de-duplicate by workout
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -30d)
       |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
       |> filter(fn: (r) => r.date == "{date}")
-      |> filter(fn: (r) => r._field == "calories" or r._field == "duration" or r._field == "duration_minutes")
+      |> drop(columns: ["date"])
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> keep(columns: ["_time","type","start_time","calories","duration","duration_minutes"])
     '''
+    result = query_api.query_data_frame(query)
+    if isinstance(result, list):
+        if len(result) == 0:
+            return 0.0
+        result = pd.concat(result, ignore_index=True)
+    if result.empty:
+        return 0.0
+
+    # Deduplicate by date + type + start_time (fallback to _time)
+    seen = set()
+    rows = []
+    for row in result.to_dict(orient="records"):
+        key = (date, row.get("type"), row.get("start_time") or row.get("_time"))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row)
+
     total = 0.0
-    durations = []
-    for table in query_api.query(query):
-        for rec in table.records:
-            field = rec.get_field()
-            val = rec.get_value()
-            if val is None:
-                continue
-            if field == "calories":
-                total += float(val)
-            elif field in ("duration", "duration_minutes"):
-                durations.append((float(val), rec.values.get("type")))
+    for row in rows:
+        cal = row.get("calories")
+        if cal is not None and not pd.isna(cal):
+            total += float(cal)
     if total > 0:
         return total
 
@@ -1629,8 +1642,12 @@ def _get_workout_calories(date: str, weight_kg: float | None = None) -> float:
 
     # Estimate from duration + type when calories missing
     est_total = 0.0
-    for dur, wtype in durations:
-        est_total += _estimate_workout_calories_from_duration(weight_kg, dur, wtype)
+    for row in rows:
+        dur = row.get("duration")
+        if dur is None or pd.isna(dur):
+            dur = row.get("duration_minutes")
+        if dur is not None and not pd.isna(dur):
+            est_total += _estimate_workout_calories_from_duration(weight_kg, float(dur), row.get("type"))
     return est_total
 
 
@@ -1677,8 +1694,9 @@ def _dash_fetch_calories(date: str, user: dict | None = None) -> dict:
     if not query_api:
         return {"calories": 0, "date": date}
     try:
-        workout_total = _get_workout_calories(date)
         bmr, meta = _get_bmr_calories_for_user(date, user=user)
+        weight_for_workouts = meta.get("weight_kg") if bmr is not None else None
+        workout_total = _get_workout_calories(date, weight_for_workouts)
         if bmr is not None:
             total = bmr + workout_total if workout_total > 0 else bmr
             return {
