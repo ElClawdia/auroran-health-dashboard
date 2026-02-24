@@ -193,6 +193,21 @@
                     <label for="email">Email</label>
                     <input type="email" id="email" name="email" value="{{ user.email }}" required>
                 </div>
+
+                <div class="form-group">
+                    <label for="dob">Date of Birth</label>
+                    <input type="date" id="dob" name="dob" value="{{ user.dob or '' }}">
+                </div>
+
+                <div class="form-group">
+                    <label for="height_cm">Height (cm)</label>
+                    <input type="number" id="height_cm" name="height_cm" step="0.1" value="{{ user.height_cm or '' }}">
+                </div>
+
+                <div class="form-group">
+                    <label for="initial_weight_kg">Initial Weight (kg)</label>
+                    <input type="number" id="initial_weight_kg" name="initial_weight_kg" step="0.1" value="{{ user.initial_weight_kg or '' }}">
+                </div>
                 
                 <div class="form-actions">
                     <button type="submit" class="btn">Save Changes</button>
@@ -220,7 +235,10 @@
             
             const data = {
                 full_name: document.getElementById('full_name').value,
-                email: document.getElementById('email').value
+                email: document.getElementById('email').value,
+                dob: document.getElementById('dob').value,
+                height_cm: document.getElementById('height_cm').value,
+                initial_weight_kg: document.getElementById('initial_weight_kg').value
             };
             
             try {

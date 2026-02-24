@@ -300,6 +300,18 @@ def account_page():
             updates['full_name'] = data['full_name']
         if data.get('email'):
             updates['email'] = data['email']
+        if data.get('dob'):
+            updates['dob'] = data['dob']
+        if data.get('height_cm'):
+            try:
+                updates['height_cm'] = float(data['height_cm'])
+            except (TypeError, ValueError):
+                pass
+        if data.get('initial_weight_kg'):
+            try:
+                updates['initial_weight_kg'] = float(data['initial_weight_kg'])
+            except (TypeError, ValueError):
+                pass
         
         if updates:
             update_user(session['user'], updates)
@@ -417,7 +429,10 @@ def api_user():
         return jsonify({
             "username": user["username"],
             "full_name": user["full_name"],
-            "email": user["email"]
+            "email": user["email"],
+            "dob": user.get("dob"),
+            "height_cm": user.get("height_cm"),
+            "initial_weight_kg": user.get("initial_weight_kg")
         })
     return jsonify({"error": "Not logged in"}), 401
 
@@ -1077,8 +1092,8 @@ def calories():
     """Get calories burned for today (default) or specified date.
     
     Sources (in priority order):
-    1. workout_cache/workouts calories (preferred if available)
-    2. daily_health.active_calories (Apple Health)
+    1. BMR + workouts (requires user profile)
+    2. daily_health.active_calories (Apple Health fallback)
     3. daily_health.total_calories (fallback)
     """
     date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
@@ -1087,26 +1102,19 @@ def calories():
         return jsonify({"calories": 0, "date": date})
     
     try:
-        # Prefer workout calories when available
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -30d)
-          |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
-          |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "calories")
-          |> sum()
-        '''
-        result = query_api.query(query)
-        workout_total = 0.0
-        for table in result:
-            for record in table.records:
-                val = record.get_value()
-                if val:
-                    workout_total += float(val)
-        if workout_total > 0:
-            return jsonify({"calories": int(workout_total), "date": date, "source": "workouts"})
+        workout_total = _get_workout_calories(date)
+        bmr, meta = _get_bmr_calories_for_user(date)
+        if bmr is not None:
+            total = bmr + workout_total if workout_total > 0 else bmr
+            return jsonify({
+                "calories": int(total),
+                "date": date,
+                "source": "bmr+workouts" if workout_total > 0 else "bmr",
+                "bmr": round(bmr, 1),
+                "workout_calories": int(workout_total)
+            })
 
-        # Prefer active calories from daily_health (Apple Health import)
+        # Prefer active calories from daily_health (Apple Health fallback)
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=1)
         stop_dt = target_dt + timedelta(days=1)
@@ -1139,7 +1147,7 @@ def calories():
         if total_val is not None:
             return jsonify({"calories": int(total_val), "date": date, "source": "apple_health_total"})
         
-        return jsonify({"calories": 0, "date": date, "source": "none"})
+        return jsonify({"calories": 0, "date": date, "source": "none", "missing_profile": meta})
     except Exception as e:
         logger.error(f"Error fetching calories: {e}")
         return jsonify({"calories": 0, "date": date, "error": str(e)})
@@ -1518,29 +1526,94 @@ def _dash_fetch_workouts(before_date: str, limit: int = 10) -> list | dict:
         return []
 
 
+def _calculate_age(dob_str: str, target_date: datetime) -> int | None:
+    """Calculate age in years on a specific date."""
+    try:
+        dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
+    except Exception:
+        return None
+    years = target_date.year - dob.year
+    if (target_date.month, target_date.day) < (dob.month, dob.day):
+        years -= 1
+    return years if years >= 0 else None
+
+
+def _calculate_bmr(weight_kg: float, height_cm: float, age_years: int) -> float:
+    """Harris-Benedict (original) BMR formula."""
+    return 66.5 + (13.75 * weight_kg) + (5.003 * height_cm) - (6.75 * age_years)
+
+
+def _get_workout_calories(date: str) -> float:
+    """Sum workout calories for a date."""
+    if not query_api:
+        return 0.0
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -30d)
+      |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
+      |> filter(fn: (r) => r.date == "{date}")
+      |> filter(fn: (r) => r._field == "calories")
+      |> sum()
+    '''
+    total = 0.0
+    for table in query_api.query(query):
+        for rec in table.records:
+            v = rec.get_value()
+            if v:
+                total += float(v)
+    return total
+
+
+def _get_bmr_calories_for_user(date: str) -> tuple[float | None, dict]:
+    """Return (bmr, meta) using user profile + weight for date."""
+    user = get_current_user()
+    if not user:
+        return None, {"reason": "no_user"}
+
+    dob = user.get("dob")
+    height_cm = user.get("height_cm")
+    if not dob or not height_cm:
+        return None, {"reason": "missing_profile"}
+
+    weight_info = _get_weight_for_date(date)
+    weight_kg = weight_info.get("weight")
+    if weight_kg is None:
+        weight_kg = user.get("initial_weight_kg")
+    if weight_kg is None:
+        return None, {"reason": "missing_weight"}
+
+    target_dt = datetime.strptime(date, "%Y-%m-%d")
+    age_years = _calculate_age(dob, target_dt)
+    if age_years is None:
+        return None, {"reason": "invalid_dob"}
+
+    bmr = _calculate_bmr(float(weight_kg), float(height_cm), age_years)
+    return bmr, {
+        "age": age_years,
+        "height_cm": float(height_cm),
+        "weight_kg": float(weight_kg),
+        "weight_date": weight_info.get("date")
+    }
+
+
 def _dash_fetch_calories(date: str) -> dict:
     """Fetch calories. Thread-safe."""
     if not query_api:
         return {"calories": 0, "date": date}
     try:
-        # Prefer workout calories when available (more realistic for activity)
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -30d)
-          |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
-          |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "calories")
-          |> sum()
-        '''
-        workout_total = 0.0
-        for table in query_api.query(query):
-            for rec in table.records:
-                v = rec.get_value()
-                if v:
-                    workout_total += float(v)
-        if workout_total > 0:
-            return {"calories": int(workout_total), "date": date, "source": "workouts"}
+        workout_total = _get_workout_calories(date)
+        bmr, meta = _get_bmr_calories_for_user(date)
+        if bmr is not None:
+            total = bmr + workout_total if workout_total > 0 else bmr
+            return {
+                "calories": int(total),
+                "date": date,
+                "source": "bmr+workouts" if workout_total > 0 else "bmr",
+                "bmr": round(bmr, 1),
+                "workout_calories": int(workout_total)
+            }
 
+        # Fallback to Apple Health if profile missing
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=1)
         stop_dt = target_dt + timedelta(days=1)
@@ -1565,10 +1638,10 @@ def _dash_fetch_calories(date: str) -> dict:
                 elif field == "total_calories":
                     total_val = float(val)
         if active_val is not None:
-            return {"calories": int(active_val), "date": date, "source": "apple_health_active"}
+            return {"calories": int(active_val), "date": date, "source": "apple_health_active", "missing_profile": meta}
         if total_val is not None:
-            return {"calories": int(total_val), "date": date, "source": "apple_health_total"}
-        return {"calories": 0, "date": date, "source": "none"}
+            return {"calories": int(total_val), "date": date, "source": "apple_health_total", "missing_profile": meta}
+        return {"calories": 0, "date": date, "source": "none", "missing_profile": meta}
     except Exception as e:
         logger.error(f"Dashboard calories error: {e}")
         return {"calories": 0, "date": date}

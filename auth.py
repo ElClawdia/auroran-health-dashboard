@@ -20,6 +20,9 @@ DEFAULT_USERS = {
         "full_name": "Tapio Vaattanen",
         "email": "vaattanen@gmail.com",
         "username": "elsonico",
+        "dob": None,  # YYYY-MM-DD
+        "height_cm": None,
+        "initial_weight_kg": None,
         "password_hash": None,  # Will be set on first load
         "password_raw": "cTfp!&!yt%jHU8&2@f"  # Only used for initial hash
     }
@@ -54,6 +57,9 @@ def load_users() -> dict:
             "full_name": data["full_name"],
             "email": data["email"],
             "username": username,
+            "dob": data.get("dob"),
+            "height_cm": data.get("height_cm"),
+            "initial_weight_kg": data.get("initial_weight_kg"),
             "password_hash": password_hash,
             "salt": salt
         }
@@ -100,7 +106,7 @@ def update_user(username: str, updates: dict) -> bool:
     
     # Update other fields
     for key, value in updates.items():
-        if key in ["full_name", "email"]:
+        if key in ["full_name", "email", "dob", "height_cm", "initial_weight_kg"]:
             users[username][key] = value
     
     save_users(users)
