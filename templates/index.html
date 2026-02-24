@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🦞 Auroran Health Command Center</title>
+    <title>Auroran Health Command Center</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="shortcut icon" href="/favicon.svg">
     <link rel="apple-touch-icon" href="/favicon.svg">
@@ -586,8 +586,35 @@
                 padding: 12px;
             }
             
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
+                margin-bottom: 16px;
+                padding-bottom: 12px;
+            }
+
             header h1 {
-                font-size: 1.2rem;
+                font-size: 1.1rem;
+                line-height: 1.2;
+            }
+
+            .subtitle {
+                font-size: 0.75rem;
+            }
+
+            #last-updated {
+                font-size: 0.75rem !important;
+            }
+
+            .account-link {
+                padding: 6px 8px;
+                font-size: 0.85rem;
+            }
+
+            header > div:last-child {
+                width: 100%;
+                justify-content: space-between;
             }
 
             .date-nav {
