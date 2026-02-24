@@ -1647,6 +1647,7 @@ def _dash_fetch_weight(date: str) -> dict:
     try:
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=7)
+        weight_start_dt = target_dt - timedelta(days=WEIGHT_LOOKBACK_DAYS)
         # 1. Manual for this date
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
