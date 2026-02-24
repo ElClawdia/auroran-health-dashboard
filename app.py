@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from datetime import time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for, Response
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
 import pandas as pd
@@ -196,6 +196,17 @@ def index():
     """Main dashboard page"""
     user = get_current_user()
     return render_template('index.html', user=user)
+
+
+@app.route('/favicon.svg')
+def favicon_svg():
+    """Inline SVG favicon (lobster)."""
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>"
+        "<text y='0.9em' font-size='90'>🦞</text>"
+        "</svg>"
+    )
+    return Response(svg, mimetype='image/svg+xml')
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1915,6 +1926,7 @@ def api_dashboard():
     """Combined endpoint: all dashboard data in one response. Queries run in parallel."""
     date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
     days = request.args.get('days', 10, type=int)  # 10-day window for fast loads
+    user = get_current_user()
     now = datetime.now()
     cache_key = f"{date}:{days}"
     if cache_key in _dashboard_cache:
@@ -1930,7 +1942,7 @@ def api_dashboard():
             ex.submit(_dash_fetch_recommendations, date): "recommendation",
             ex.submit(_dash_fetch_pmc, days, date): "pmc",
             ex.submit(_dash_fetch_workouts, date, 10): "workouts",
-            ex.submit(_dash_fetch_calories, date): "calories",
+            ex.submit(_dash_fetch_calories, date, user): "calories",
             ex.submit(_dash_fetch_weight, date): "weight",
         }
         for fut in as_completed(futures):
