@@ -208,6 +208,11 @@
                     <label for="initial_weight_kg">Initial Weight (kg)</label>
                     <input type="number" id="initial_weight_kg" name="initial_weight_kg" step="0.1" value="{{ user.initial_weight_kg or '' }}">
                 </div>
+
+                <div class="form-group">
+                    <label for="timezone">Time Zone</label>
+                    <input type="text" id="timezone" name="timezone" placeholder="Europe/Helsinki" value="{{ user.timezone or '' }}">
+                </div>
                 
                 <div class="form-actions">
                     <button type="submit" class="btn">Save Changes</button>
@@ -238,7 +243,8 @@
                 email: document.getElementById('email').value,
                 dob: document.getElementById('dob').value,
                 height_cm: document.getElementById('height_cm').value,
-                initial_weight_kg: document.getElementById('initial_weight_kg').value
+                initial_weight_kg: document.getElementById('initial_weight_kg').value,
+                timezone: document.getElementById('timezone').value
             };
             
             try {

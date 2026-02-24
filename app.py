@@ -12,6 +12,8 @@ import sys
 import secrets
 import logging
 import threading
+from zoneinfo import ZoneInfo
+from datetime import time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
@@ -312,6 +314,8 @@ def account_page():
                 updates['initial_weight_kg'] = float(data['initial_weight_kg'])
             except (TypeError, ValueError):
                 pass
+        if data.get('timezone'):
+            updates['timezone'] = data['timezone']
         
         if updates:
             update_user(session['user'], updates)
@@ -432,7 +436,8 @@ def api_user():
             "email": user["email"],
             "dob": user.get("dob"),
             "height_cm": user.get("height_cm"),
-            "initial_weight_kg": user.get("initial_weight_kg")
+            "initial_weight_kg": user.get("initial_weight_kg"),
+            "timezone": user.get("timezone")
         })
     return jsonify({"error": "Not logged in"}), 401
 
@@ -1102,7 +1107,10 @@ def calories():
         return jsonify({"calories": 0, "date": date})
     
     try:
-        workout_total = _get_workout_calories(date)
+        weight_for_workouts = None
+        if bmr is not None:
+            weight_for_workouts = meta.get("weight_kg")
+        workout_total = _get_workout_calories(date, weight_for_workouts)
         bmr, meta = _get_bmr_calories_for_user(date)
         if bmr is not None:
             total = bmr + workout_total if workout_total > 0 else bmr
@@ -1538,30 +1546,92 @@ def _calculate_age(dob_str: str, target_date: datetime) -> int | None:
     return years if years >= 0 else None
 
 
+def _get_user_timezone(user: dict) -> ZoneInfo:
+    tz_name = user.get("timezone") if user else None
+    try:
+        return ZoneInfo(tz_name) if tz_name else ZoneInfo("UTC")
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def _day_fraction(date_str: str, tz: ZoneInfo) -> float:
+    """Return fraction of day elapsed for date in the given timezone."""
+    try:
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except Exception:
+        return 1.0
+    now = datetime.now(tz)
+    if target_date < now.date():
+        return 1.0
+    if target_date > now.date():
+        return 0.0
+    midnight = datetime.combine(target_date, dt_time(0, 0, 0), tzinfo=tz)
+    elapsed = (now - midnight).total_seconds()
+    return max(0.0, min(1.0, elapsed / 86400.0))
+
+
 def _calculate_bmr(weight_kg: float, height_cm: float, age_years: int) -> float:
     """Harris-Benedict (original) BMR formula."""
     return 66.5 + (13.75 * weight_kg) + (5.003 * height_cm) - (6.75 * age_years)
 
 
-def _get_workout_calories(date: str) -> float:
-    """Sum workout calories for a date."""
+def _estimate_workout_calories_from_duration(weight_kg: float, duration_min: float, workout_type: str | None) -> float:
+    """Estimate workout calories using METs."""
+    if weight_kg <= 0 or duration_min <= 0:
+        return 0.0
+    wt = (workout_type or "").lower()
+    met = 6.0
+    if "run" in wt:
+        met = 9.8
+    elif "cycle" in wt or "ride" in wt or "bike" in wt:
+        met = 6.8
+    elif "walk" in wt or "hike" in wt:
+        met = 5.3
+    elif "swim" in wt:
+        met = 6.0
+    elif "ski" in wt:
+        met = 7.0
+    elif "strength" in wt:
+        met = 6.0
+    hours = duration_min / 60.0
+    return met * weight_kg * hours
+
+
+def _get_workout_calories(date: str, weight_kg: float | None = None) -> float:
+    """Sum workout calories for a date. If missing, estimate from duration."""
     if not query_api:
         return 0.0
+    # Pull calories + durations for the date
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -30d)
       |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
       |> filter(fn: (r) => r.date == "{date}")
-      |> filter(fn: (r) => r._field == "calories")
-      |> sum()
+      |> filter(fn: (r) => r._field == "calories" or r._field == "duration" or r._field == "duration_minutes")
     '''
     total = 0.0
+    durations = []
     for table in query_api.query(query):
         for rec in table.records:
-            v = rec.get_value()
-            if v:
-                total += float(v)
-    return total
+            field = rec.get_field()
+            val = rec.get_value()
+            if val is None:
+                continue
+            if field == "calories":
+                total += float(val)
+            elif field in ("duration", "duration_minutes"):
+                durations.append((float(val), rec.values.get("type")))
+    if total > 0:
+        return total
+
+    if weight_kg is None:
+        return 0.0
+
+    # Estimate from duration + type when calories missing
+    est_total = 0.0
+    for dur, wtype in durations:
+        est_total += _estimate_workout_calories_from_duration(weight_kg, dur, wtype)
+    return est_total
 
 
 def _get_bmr_calories_for_user(date: str, user: dict | None = None) -> tuple[float | None, dict]:
@@ -1573,6 +1643,7 @@ def _get_bmr_calories_for_user(date: str, user: dict | None = None) -> tuple[flo
 
     dob = user.get("dob")
     height_cm = user.get("height_cm")
+    tz = _get_user_timezone(user)
     if not dob or not height_cm:
         return None, {"reason": "missing_profile"}
 
@@ -1588,12 +1659,16 @@ def _get_bmr_calories_for_user(date: str, user: dict | None = None) -> tuple[flo
     if age_years is None:
         return None, {"reason": "invalid_dob"}
 
-    bmr = _calculate_bmr(float(weight_kg), float(height_cm), age_years)
+    bmr_full = _calculate_bmr(float(weight_kg), float(height_cm), age_years)
+    fraction = _day_fraction(date, tz)
+    bmr = bmr_full * fraction
     return bmr, {
         "age": age_years,
         "height_cm": float(height_cm),
         "weight_kg": float(weight_kg),
-        "weight_date": weight_info.get("date")
+        "weight_date": weight_info.get("date"),
+        "timezone": str(tz),
+        "day_fraction": round(fraction, 4)
     }
 
 
