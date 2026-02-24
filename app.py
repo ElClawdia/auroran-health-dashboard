@@ -81,6 +81,7 @@ def get_or_create_secret_key():
     return new_key
 
 app.secret_key = get_or_create_secret_key()
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5MB upload limit
 
 # Initialize InfluxDB client with fallback
 influx_client = None
@@ -255,28 +256,39 @@ def logout():
 @login_required
 def upload_profile_photo():
     """Upload profile photo for the current user."""
-    user = get_current_user()
-    if not user:
-        return jsonify({"error": "User not found"}), 404
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({"error": "User not found"}), 404
 
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-    file = request.files['file']
-    if not file or file.filename == '':
-        return jsonify({"error": "No file provided"}), 400
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        file = request.files['file']
+        if not file or file.filename == '':
+            return jsonify({"error": "No file provided"}), 400
 
-    filename = secure_filename(file.filename)
-    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-    if ext not in ALLOWED_PROFILE_EXTS:
-        return jsonify({"error": "Unsupported file type"}), 400
+        filename = secure_filename(file.filename)
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        if ext not in ALLOWED_PROFILE_EXTS:
+            return jsonify({"error": "Unsupported file type"}), 400
 
-    safe_name = f"profile_{user['username']}.{ext}"
-    save_path = UPLOAD_DIR / safe_name
-    file.save(save_path)
+        safe_name = f"profile_{user['username']}.{ext}"
+        save_path = UPLOAD_DIR / safe_name
+        file.save(save_path)
 
-    rel_path = f"/uploads/{safe_name}"
-    update_user(user["username"], profile_image=rel_path)
-    return jsonify({"success": True, "profile_image": rel_path})
+        rel_path = f"/uploads/{safe_name}"
+        update_user(user["username"], profile_image=rel_path)
+        return jsonify({"success": True, "profile_image": rel_path})
+    except Exception as e:
+        logger.error(f"Profile photo upload error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "File too large (max 5MB)"}), 413
+    return "File too large", 413
 
 
 @app.route('/forgot-password', methods=['GET', 'POST'])
