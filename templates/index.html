@@ -58,6 +58,13 @@
         h1 .emoji {
             font-size: 2rem;
         }
+
+        h1 .grab-emoji {
+            font-size: 1.4rem;
+            opacity: 0.85;
+            margin-left: -6px;
+            margin-right: 6px;
+        }
         
         .subtitle {
             color: var(--text-dim);
@@ -585,6 +592,21 @@
             header h1 {
                 font-size: 1.2rem;
             }
+
+            .date-nav {
+                padding: 10px 12px;
+                gap: 10px;
+            }
+
+            .date-nav-btn {
+                padding: 6px 8px;
+                min-width: 36px;
+                justify-content: center;
+            }
+
+            .date-nav-text {
+                display: none;
+            }
             
             .week-grid {
                 grid-template-columns: repeat(4, 1fr);
@@ -612,7 +634,7 @@
     <div class="container">
         <header>
             <div>
-                <h1><a href="/" style="text-decoration: none; color: inherit;"><span class="emoji">🦞</span> Auroran Health Command Center</a></h1>
+                <h1><a href="/" style="text-decoration: none; color: inherit;"><span class="emoji">🦞</span><span class="emoji grab-emoji">🤏</span> Auroran Health Command Center</a></h1>
                 <div class="subtitle">Personal AI Health Dashboard • Training Hub</div>
             </div>
             <div style="display: flex; align-items: center; gap: 20px;">
@@ -631,14 +653,14 @@
         <!-- Date Navigation -->
         <div class="date-nav">
             <button class="date-nav-btn" id="date-prev" title="Previous day">
-                <span>◀</span> Previous
+                <span class="arrow-icon">◀</span><span class="date-nav-text">Previous</span>
             </button>
             <div class="date-nav-current is-today" id="date-current" title="Click to select date or go to today">
                 Today
             </div>
             <input type="date" class="date-nav-input" id="date-picker-hidden" autocomplete="off">
             <button class="date-nav-btn" id="date-next" title="Next day" disabled>
-                Next <span>▶</span>
+                <span class="date-nav-text">Next</span><span class="arrow-icon">▶</span>
             </button>
         </div>
         
@@ -1003,11 +1025,11 @@
                 if (absX < minDistance || absY > maxVertical || dt > maxTime) return;
 
                 if (dx < 0) {
-                    // Swipe left -> previous date
-                    changeDate(-1);
-                } else {
-                    // Swipe right -> next date (if available)
+                    // Swipe left -> next date (if available)
                     changeDate(1);
+                } else {
+                    // Swipe right -> previous date
+                    changeDate(-1);
                 }
             };
 
