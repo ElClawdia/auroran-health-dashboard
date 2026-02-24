@@ -30,11 +30,13 @@
             color: var(--text);
             min-height: 100vh;
             padding: 20px;
+            touch-action: pan-y;
         }
         
         .container {
             max-width: 1200px;
             margin: 0 auto;
+            touch-action: pan-y;
         }
         
         header {
@@ -967,7 +969,7 @@
         }
 
         function initSwipeNavigation() {
-            const swipeTarget = document.body;
+            const swipeTarget = document.querySelector('.container') || document.body;
             let startX = 0;
             let startY = 0;
             let startTime = 0;
@@ -977,29 +979,19 @@
                 return !!target.closest('input, textarea, select, button, a, .card-input, .card-date-picker, .trend-modal, canvas');
             }
 
-            swipeTarget.addEventListener('touchstart', (e) => {
-                if (e.touches.length !== 1) return;
-                if (isInteractiveTarget(e.target)) return;
-                const t = e.touches[0];
-                startX = t.clientX;
-                startY = t.clientY;
+            const onStart = (clientX, clientY, target) => {
+                if (isInteractiveTarget(target)) return;
+                startX = clientX;
+                startY = clientY;
                 startTime = Date.now();
                 tracking = true;
-            }, { passive: true });
+            };
 
-            swipeTarget.addEventListener('touchmove', (e) => {
-                if (!tracking) return;
-                if (e.touches.length !== 1) {
-                    tracking = false;
-                }
-            }, { passive: true });
-
-            swipeTarget.addEventListener('touchend', (e) => {
+            const onEnd = (clientX, clientY) => {
                 if (!tracking) return;
                 tracking = false;
-                const t = e.changedTouches[0];
-                const dx = t.clientX - startX;
-                const dy = t.clientY - startY;
+                const dx = clientX - startX;
+                const dy = clientY - startY;
                 const dt = Date.now() - startTime;
 
                 const absX = Math.abs(dx);
@@ -1017,6 +1009,34 @@
                     // Swipe right -> next date (if available)
                     changeDate(1);
                 }
+            };
+
+            swipeTarget.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                const t = e.touches[0];
+                onStart(t.clientX, t.clientY, e.target);
+            }, { passive: true });
+
+            swipeTarget.addEventListener('touchmove', (e) => {
+                if (!tracking) return;
+                if (e.touches.length !== 1) {
+                    tracking = false;
+                }
+            }, { passive: true });
+
+            swipeTarget.addEventListener('touchend', (e) => {
+                const t = e.changedTouches[0];
+                onEnd(t.clientX, t.clientY);
+            }, { passive: true });
+
+            swipeTarget.addEventListener('pointerdown', (e) => {
+                if (e.pointerType !== 'touch') return;
+                onStart(e.clientX, e.clientY, e.target);
+            }, { passive: true });
+
+            swipeTarget.addEventListener('pointerup', (e) => {
+                if (e.pointerType !== 'touch') return;
+                onEnd(e.clientX, e.clientY);
             }, { passive: true });
         }
         
