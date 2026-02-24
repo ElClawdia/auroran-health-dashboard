@@ -1141,95 +1141,8 @@ def weight():
         if not query_api:
             return jsonify({"weight": None})
         
-        # Cache GET by date (30s TTL)
-        now = datetime.now()
-        if date in _weight_cache:
-            cached, expires = _weight_cache[date]
-            if now < expires:
-                return jsonify(cached)
-            del _weight_cache[date]
-
         try:
-            target_dt = datetime.strptime(date, "%Y-%m-%d")
-            start_dt = target_dt - timedelta(days=7)
-            weight_start_dt = target_dt - timedelta(days=WEIGHT_LOOKBACK_DAYS)
-            stop_dt = target_dt + timedelta(days=1)
-            # 1. Manual override for this specific date (get latest, then exclude if deleted)
-            query = f'''
-            from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
-              |> filter(fn: (r) => r._measurement == "manual_values")
-              |> filter(fn: (r) => r._field == "weight")
-              |> filter(fn: (r) => r.date == "{date}")
-              |> sort(columns: ["_time"], desc: true)
-              |> limit(n: 1)
-              |> filter(fn: (r) => r.deleted != "true")
-            '''
-            result = query_api.query(query)
-            for table in result:
-                for record in table.records:
-                    val = record.get_value()
-                    if val:
-                        resp = {"weight": float(val), "source": "manual", "date": date}
-                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
-                        return jsonify(resp)
-
-            # 2. daily_health for this specific date (Fitbit, Apple Health, Suunto)
-            query = f'''
-            from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
-              |> filter(fn: (r) => r._measurement == "daily_health")
-              |> filter(fn: (r) => r._field == "weight")
-              |> filter(fn: (r) => r.date == "{date}")
-              |> last()
-            '''
-            result = query_api.query(query)
-            for table in result:
-                for record in table.records:
-                    val = record.get_value()
-                    if val:
-                        resp = {"weight": float(val), "source": "auto", "date": date}
-                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
-                        return jsonify(resp)
-
-            # 3. Most recent manual weight (any date) when no data for this date (exclude if latest is deleted)
-            query = f'''
-            from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
-              |> filter(fn: (r) => r._measurement == "manual_values")
-              |> filter(fn: (r) => r._field == "weight")
-              |> sort(columns: ["_time"], desc: true)
-              |> limit(n: 1)
-              |> filter(fn: (r) => r.deleted != "true")
-            '''
-            result = query_api.query(query)
-            for table in result:
-                for record in table.records:
-                    val = record.get_value()
-                    if val:
-                        resp = {"weight": float(val), "source": "manual", "date": date}
-                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
-                        return jsonify(resp)
-
-            # 4. Most recent daily_health weight when no data for this date
-            query = f'''
-            from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -{WEIGHT_LOOKBACK_DAYS}d)
-              |> filter(fn: (r) => r._measurement == "daily_health")
-              |> filter(fn: (r) => r._field == "weight")
-              |> last()
-            '''
-            result = query_api.query(query)
-            for table in result:
-                for record in table.records:
-                    val = record.get_value()
-                    if val:
-                        resp = {"weight": float(val), "source": "auto", "date": date}
-                        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
-                        return jsonify(resp)
-            
-            resp = {"weight": None, "date": date}
-            _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+            resp = _get_weight_for_date(date)
             return jsonify(resp)
         except Exception as e:
             logger.error(f"Error fetching weight: {e}")
@@ -1632,19 +1545,28 @@ def _dash_fetch_calories(date: str) -> dict:
         return {"calories": 0, "date": date}
 
 
-def _dash_fetch_weight(date: str) -> dict:
-    """Fetch weight. Thread-safe."""
+def _get_weight_for_date(date: str) -> dict:
+    """Fetch weight for a date with manual override and caching."""
     if not query_api:
         return {"weight": None, "date": date}
+
+    now = datetime.now()
+    if date in _weight_cache:
+        cached, expires = _weight_cache[date]
+        if now < expires:
+            return cached
+        del _weight_cache[date]
+
     try:
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         start_dt = target_dt - timedelta(days=7)
         weight_start_dt = target_dt - timedelta(days=WEIGHT_LOOKBACK_DAYS)
         stop_dt = target_dt + timedelta(days=1)
-        # 1. Manual for this date
+
+        # 1) Manual for this date
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "manual_values")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date == "{date}")
@@ -1655,12 +1577,15 @@ def _dash_fetch_weight(date: str) -> dict:
         for table in query_api.query(query):
             for rec in table.records:
                 v = rec.get_value()
-                if v:
-                    return {"weight": float(v), "source": "manual", "date": date}
-        # 2. daily_health for this date
+                if v is not None:
+                    resp = {"weight": float(v), "source": "manual", "date": date}
+                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                    return resp
+
+        # 2) daily_health for this date
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date == "{date}")
@@ -1669,9 +1594,12 @@ def _dash_fetch_weight(date: str) -> dict:
         for table in query_api.query(query):
             for rec in table.records:
                 v = rec.get_value()
-                if v:
-                    return {"weight": float(v), "source": "auto", "date": date}
-        # 3. Most recent daily_health on/before this date (within lookback window)
+                if v is not None:
+                    resp = {"weight": float(v), "source": "auto", "date": date}
+                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                    return resp
+
+        # 3) Most recent daily_health on/before date (42-day window)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
@@ -1685,10 +1613,12 @@ def _dash_fetch_weight(date: str) -> dict:
         for table in query_api.query(query):
             for rec in table.records:
                 v = rec.get_value()
-                if v:
-                    return {"weight": float(v), "source": "auto", "date": rec.values.get("date", date)}
+                if v is not None:
+                    resp = {"weight": float(v), "source": "auto", "date": rec.values.get("date", date)}
+                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                    return resp
 
-        # 4. Most recent manual on/before this date (within lookback window)
+        # 4) Most recent manual on/before date (42-day window)
         query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
@@ -1703,12 +1633,22 @@ def _dash_fetch_weight(date: str) -> dict:
         for table in query_api.query(query):
             for rec in table.records:
                 v = rec.get_value()
-                if v:
-                    return {"weight": float(v), "source": "manual", "date": rec.values.get("date", date)}
-        return {"weight": None, "date": date}
+                if v is not None:
+                    resp = {"weight": float(v), "source": "manual", "date": rec.values.get("date", date)}
+                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                    return resp
+
+        resp = {"weight": None, "date": date}
+        _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+        return resp
     except Exception as e:
-        logger.error(f"Dashboard weight error: {e}")
+        logger.error(f"Weight fetch error: {e}")
         return {"weight": None, "date": date}
+
+
+def _dash_fetch_weight(date: str) -> dict:
+    """Fetch weight for dashboard. Thread-safe."""
+    return _get_weight_for_date(date)
 
 
 @app.route('/api/dashboard/quick')
