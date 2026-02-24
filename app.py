@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 from datetime import time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request, session, redirect, url_for, Response
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for, Response, send_from_directory
+from werkzeug.utils import secure_filename
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
 import pandas as pd
@@ -29,6 +30,10 @@ from pathlib import Path
 # Create logs directory
 log_dir = Path(__file__).parent / "logs"
 log_dir.mkdir(exist_ok=True)
+
+UPLOAD_DIR = Path(__file__).parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+ALLOWED_PROFILE_EXTS = {"png", "jpg", "jpeg", "webp"}
 
 # Setup logging
 logging.basicConfig(
@@ -198,6 +203,12 @@ def index():
     return render_template('index.html', user=user)
 
 
+@app.route('/uploads/<path:filename>')
+@login_required
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
+
+
 @app.route('/favicon.svg')
 def favicon_svg():
     """Inline SVG favicon (lobster)."""
@@ -238,6 +249,34 @@ def logout():
     """Logout and clear session"""
     session.pop('user', None)
     return redirect(url_for('login_page'))
+
+
+@app.route('/api/profile-photo', methods=['POST'])
+@login_required
+def upload_profile_photo():
+    """Upload profile photo for the current user."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    file = request.files['file']
+    if not file or file.filename == '':
+        return jsonify({"error": "No file provided"}), 400
+
+    filename = secure_filename(file.filename)
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if ext not in ALLOWED_PROFILE_EXTS:
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    safe_name = f"profile_{user['username']}.{ext}"
+    save_path = UPLOAD_DIR / safe_name
+    file.save(save_path)
+
+    rel_path = f"/uploads/{safe_name}"
+    update_user(user["username"], profile_image=rel_path)
+    return jsonify({"success": True, "profile_image": rel_path})
 
 
 @app.route('/forgot-password', methods=['GET', 'POST'])
@@ -448,7 +487,8 @@ def api_user():
             "dob": user.get("dob"),
             "height_cm": user.get("height_cm"),
             "initial_weight_kg": user.get("initial_weight_kg"),
-            "timezone": user.get("timezone")
+            "timezone": user.get("timezone"),
+            "profile_image": user.get("profile_image")
         })
     return jsonify({"error": "Not logged in"}), 401
 

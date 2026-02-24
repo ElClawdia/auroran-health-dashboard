@@ -24,6 +24,7 @@ DEFAULT_USERS = {
         "height_cm": None,
         "initial_weight_kg": None,
         "timezone": "Europe/Helsinki",
+        "profile_image": None,
         "password_hash": None,  # Will be set on first load
         "password_raw": "cTfp!&!yt%jHU8&2@f"  # Only used for initial hash
     }
@@ -62,6 +63,7 @@ def load_users() -> dict:
             "height_cm": data.get("height_cm"),
             "initial_weight_kg": data.get("initial_weight_kg"),
             "timezone": data.get("timezone"),
+            "profile_image": data.get("profile_image"),
             "password_hash": password_hash,
             "salt": salt
         }
@@ -108,7 +110,7 @@ def update_user(username: str, updates: dict) -> bool:
     
     # Update other fields
     for key, value in updates.items():
-        if key in ["full_name", "email", "dob", "height_cm", "initial_weight_kg", "timezone"]:
+        if key in ["full_name", "email", "dob", "height_cm", "initial_weight_kg", "timezone", "profile_image"]:
             users[username][key] = value
     
     save_users(users)

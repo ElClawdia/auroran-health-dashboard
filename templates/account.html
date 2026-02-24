@@ -178,6 +178,17 @@
         
         <div class="card">
             <h2>Profile Information</h2>
+            <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px;">
+                {% if user.profile_image %}
+                    <img src="{{ user.profile_image }}" alt="Profile" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover;">
+                {% else %}
+                    <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--card-bg); display: flex; align-items: center; justify-content: center; color: var(--text-dim); font-size: 24px;">👤</div>
+                {% endif %}
+                <form id="profile-photo-form" enctype="multipart/form-data" style="display: flex; align-items: center; gap: 10px;">
+                    <input type="file" id="profile-photo" name="file" accept="image/*">
+                    <button type="submit" class="btn">Upload</button>
+                </form>
+            </div>
             <form id="profile-form">
                 <div class="form-group">
                     <label for="username">Username</label>
@@ -264,6 +275,35 @@
                 alert('Update failed: ' + error.message);
             }
         });
+
+        const photoForm = document.getElementById('profile-photo-form');
+        if (photoForm) {
+            photoForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const fileInput = document.getElementById('profile-photo');
+                if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                    alert('Please select an image to upload');
+                    return;
+                }
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                try {
+                    const response = await fetch('/api/profile-photo', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+                    if (response.ok && result.success) {
+                        alert('Profile photo updated');
+                        window.location.reload();
+                    } else {
+                        alert(result.error || 'Failed to upload profile photo');
+                    }
+                } catch (error) {
+                    alert('Upload failed: ' + error.message);
+                }
+            });
+        }
         
         document.getElementById('password-form').addEventListener('submit', async function(e) {
             e.preventDefault();

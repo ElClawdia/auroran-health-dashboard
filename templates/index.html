@@ -666,7 +666,11 @@
                     Loading...
                 </div>
                 <a href="/account" class="account-link" title="Account Settings">
-                    <span style="font-size: 1.2rem;">👤</span>
+                    {% if user and user.profile_image %}
+                        <img src="{{ user.profile_image }}" alt="Profile" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover;">
+                    {% else %}
+                        <span style="font-size: 1.2rem;">👤</span>
+                    {% endif %}
                     <span>{{ user.full_name if user else 'Account' }}</span>
                 </a>
             </div>
