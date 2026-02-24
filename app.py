@@ -37,6 +37,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_PROFILE_EXTS = {"png", "jpg", "jpeg", "webp"}
 RECENT_WORKOUTS_CACHE_FILE = log_dir / "recent_workouts_cache.json"
 RECENT_WORKOUTS_CACHE_TTL_SECONDS = 300
+ENABLE_INFLUX_WORKOUT_REFRESH = os.getenv("ENABLE_INFLUX_WORKOUT_REFRESH", "0") == "1"
 
 # Setup logging
 logging.basicConfig(
@@ -171,6 +172,8 @@ def _save_recent_workouts_cache_to_disk(data: list[dict]):
 
 
 def _refresh_recent_workouts_cache_async(before_date: str | None):
+    if not ENABLE_INFLUX_WORKOUT_REFRESH:
+        return
     with _recent_workouts_lock:
         if _recent_workouts_cache.get("loading"):
             return
@@ -179,7 +182,9 @@ def _refresh_recent_workouts_cache_async(before_date: str | None):
     def _worker():
         try:
             target = before_date or datetime.now().strftime("%Y-%m-%d")
-            records = _fetch_workouts_limited(target, 200)
+            records = _fetch_workouts_recent_fast(target, 200)
+            if not records:
+                records = _fetch_workouts_limited(target, 200)
             with _recent_workouts_lock:
                 _recent_workouts_cache["data"] = records
                 _recent_workouts_cache["loaded_at"] = datetime.now()
@@ -191,6 +196,50 @@ def _refresh_recent_workouts_cache_async(before_date: str | None):
                 _recent_workouts_cache["loading"] = False
 
     threading.Thread(target=_worker, daemon=True).start()
+
+
+def _fetch_workouts_recent_fast(before_date: str | None, limit: int) -> list[dict]:
+    """Fast-path fetch from workout_cache using limited _time sort."""
+    if not query_api:
+        return []
+
+    fields = [
+        "duration", "duration_minutes", "avg_hr", "max_hr", "calories",
+        "suffer_score", "distance", "elevation_gain", "start_time", "time",
+        "name", "strava_id", "feeling", "intensity"
+    ]
+    field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
+    cutoff = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+    date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
+    if before_date:
+        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
+
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -14d)
+      |> filter(fn: (r) => r._measurement == "workout_cache")
+      |> filter(fn: (r) => {field_filter})
+      {date_filter}
+    '''
+    workouts = {}
+    try:
+        for record in query_api.query_stream(query):
+            key = str(record.get_time())
+            entry = workouts.setdefault(
+                key,
+                {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
+            )
+            entry[record.get_field()] = record.get_value()
+    except Exception:
+        return []
+
+    if not workouts:
+        return []
+
+    records = list(workouts.values())
+    records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    deduped = _dedupe_workouts(records)
+    return deduped[:limit]
 
 
 def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
@@ -209,7 +258,9 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
     stale = True
     if loaded_at and (datetime.now() - loaded_at).total_seconds() < RECENT_WORKOUTS_CACHE_TTL_SECONDS:
         stale = False
-    return filtered[:limit], stale or loading
+    if not ENABLE_INFLUX_WORKOUT_REFRESH:
+        stale = False
+    return filtered[:limit], (stale or loading)
 
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 42
@@ -1058,8 +1109,9 @@ def workouts():
                     return resp
                 _refresh_recent_workouts_cache_async(before_date)
                 resp = jsonify([])
-                resp.headers["X-Workouts-Stale"] = "true"
-                resp.headers["Retry-After"] = "2"
+                if ENABLE_INFLUX_WORKOUT_REFRESH:
+                    resp.headers["X-Workouts-Stale"] = "true"
+                    resp.headers["Retry-After"] = "5"
                 return resp
 
             # Fast path: use in-memory index for date-filtered requests

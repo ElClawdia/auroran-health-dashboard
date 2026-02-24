@@ -974,6 +974,7 @@
             if (newDate > today) return;
             
             currentViewDate = newDate;
+            workoutsRetryCount = 0;
             updateDateNavigation();
             
             // Clear manual values for new date and reload
@@ -1096,6 +1097,7 @@
         }
         
         let fetchAbortController = null;
+        let workoutsRetryCount = 0;
         const FETCH_TIMEOUT_MS = 20000;  // 20s per phase
         async function fetchJson(url, signal) {
             const res = await fetch(url, { signal });
@@ -1114,15 +1116,6 @@
             // Phase 3 only - retries allowed
             const workoutsRes = await fetch('/api/workouts?before_date=' + date + '&limit=10', { signal });
             if (date !== currentViewDate) return;
-            if (workoutsRes.status === 503) {
-                const retryAfter = parseInt(workoutsRes.headers.get('Retry-After') || '3', 10);
-                setTimeout(() => {
-                    if (date === currentViewDate && fetchAbortController) {
-                        fetchWorkoutsOnly(date, fetchAbortController.signal);
-                    }
-                }, retryAfter * 1000);
-                return;
-            }
             if (!workoutsRes.ok) return;
             const isStale = workoutsRes.headers.get('X-Workouts-Stale') === 'true';
             let workouts = [];
@@ -1132,12 +1125,18 @@
             } catch (_) { }
             updateWorkouts(workouts);
             document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-            if (isStale) {
+            if (workouts.length > 0) {
+                workoutsRetryCount = 0;
+                return;
+            }
+            if (isStale && workoutsRetryCount < 5) {
+                const delay = Math.min(10000, 2000 * (workoutsRetryCount + 1));
+                workoutsRetryCount += 1;
                 setTimeout(() => {
                     if (date === currentViewDate && fetchAbortController) {
                         fetchWorkoutsOnly(date, fetchAbortController.signal);
                     }
-                }, 2000);
+                }, delay);
             }
         }
 

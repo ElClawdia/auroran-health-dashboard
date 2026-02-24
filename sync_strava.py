@@ -6,6 +6,7 @@ Run periodically via cron: */10 * * * *
 
 import os
 import sys
+import json
 from pathlib import Path
 
 # Suppress config INFO/DEBUG logs for CLI runs
@@ -193,6 +194,42 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                 print(f"Error syncing activity {activity.get('id')}: {e}")
         
         print(f"Synced {synced} new, skipped {skipped} existing")
+
+        # Write recent workouts cache to disk for fast dashboard loads
+        try:
+            if activities:
+                recent = []
+                seen = set()
+                for activity in activities:
+                    strava_id = str(activity.get("id", ""))
+                    if strava_id in seen:
+                        continue
+                    seen.add(strava_id)
+                    recent.append({
+                        "date": activity.get("date", ""),
+                        "type": activity.get("type", ""),
+                        "duration": activity.get("duration"),
+                        "duration_minutes": activity.get("duration"),
+                        "avg_hr": activity.get("avg_hr"),
+                        "max_hr": activity.get("max_hr"),
+                        "calories": activity.get("calories"),
+                        "suffer_score": activity.get("suffer_score"),
+                        "distance": activity.get("distance"),
+                        "elevation_gain": activity.get("elevation_gain"),
+                        "start_time": activity.get("time", ""),
+                        "name": activity.get("name", ""),
+                        "strava_id": strava_id,
+                    })
+                recent = sorted(recent, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+                payload = {
+                    "loaded_at": datetime.now().isoformat(),
+                    "data": recent[:200],
+                }
+                cache_file = Path(__file__).parent / "logs" / "recent_workouts_cache.json"
+                cache_file.write_text(json.dumps(payload))
+                print(f"Wrote recent workouts cache: {cache_file}")
+        except Exception as e:
+            print(f"Warning: failed to write recent workouts cache: {e}")
         
     finally:
         # Proper cleanup to ensure all writes are flushed
