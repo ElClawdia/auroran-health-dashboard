@@ -824,6 +824,7 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
           {date_filter}
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
           |> keep(columns: ["_time", "date", "type", {", ".join([f'"{f}"' for f in fields])}])
+          |> group()
           |> sort(columns: ["date", "start_time"], desc: true)
           |> limit(n: {limit})
         '''
@@ -853,6 +854,12 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
     cleaned = []
     for row in records:
         cleaned.append({k: (None if pd.isna(v) else v) for k, v in row.items()})
+    # Ensure global ordering after concat
+    cleaned = sorted(
+        cleaned,
+        key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+        reverse=True,
+    )
     deduped = _dedupe_workouts(cleaned)
     return deduped[:limit]
 
