@@ -965,6 +965,60 @@
             
             updateDateNavigation();
         }
+
+        function initSwipeNavigation() {
+            const swipeTarget = document.body;
+            let startX = 0;
+            let startY = 0;
+            let startTime = 0;
+            let tracking = false;
+
+            function isInteractiveTarget(target) {
+                return !!target.closest('input, textarea, select, button, a, .card-input, .card-date-picker, .trend-modal, canvas');
+            }
+
+            swipeTarget.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                if (isInteractiveTarget(e.target)) return;
+                const t = e.touches[0];
+                startX = t.clientX;
+                startY = t.clientY;
+                startTime = Date.now();
+                tracking = true;
+            }, { passive: true });
+
+            swipeTarget.addEventListener('touchmove', (e) => {
+                if (!tracking) return;
+                if (e.touches.length !== 1) {
+                    tracking = false;
+                }
+            }, { passive: true });
+
+            swipeTarget.addEventListener('touchend', (e) => {
+                if (!tracking) return;
+                tracking = false;
+                const t = e.changedTouches[0];
+                const dx = t.clientX - startX;
+                const dy = t.clientY - startY;
+                const dt = Date.now() - startTime;
+
+                const absX = Math.abs(dx);
+                const absY = Math.abs(dy);
+                const minDistance = 60;
+                const maxVertical = 80;
+                const maxTime = 700;
+
+                if (absX < minDistance || absY > maxVertical || dt > maxTime) return;
+
+                if (dx < 0) {
+                    // Swipe left -> previous date
+                    changeDate(-1);
+                } else {
+                    // Swipe right -> next date (if available)
+                    changeDate(1);
+                }
+            }, { passive: true });
+        }
         
         // Check if a metric should use manual value
         function shouldUseManual(metric) {
@@ -1838,6 +1892,7 @@
         
         // Initialize date navigation
         initDateNavigation();
+        initSwipeNavigation();
         
         // Trend modal functionality
         let trendModalChart = null;
