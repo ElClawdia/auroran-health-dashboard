@@ -277,7 +277,7 @@ def upload_profile_photo():
         file.save(save_path)
 
         rel_path = f"/uploads/{safe_name}"
-        update_user(user["username"], profile_image=rel_path)
+        update_user(user["username"], {"profile_image": rel_path})
         return jsonify({"success": True, "profile_image": rel_path})
     except Exception as e:
         logger.error(f"Profile photo upload error: {e}")
