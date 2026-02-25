@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -30,6 +30,7 @@ def parse_apple_health(xml_path: Path) -> dict[str, dict[str, float]]:
     - steps
     - resting_hr (if present in export)
     - hrv_avg (if present in export)
+    - weight (if present in export)
     """
     daily = defaultdict(
         lambda: {
@@ -39,6 +40,7 @@ def parse_apple_health(xml_path: Path) -> dict[str, dict[str, float]]:
             "_resting_hr_values": [],
             "_heart_rate_values": [],
             "_hrv_values": [],
+            "_weight_values": [],
         }
     )
 
@@ -81,6 +83,9 @@ def parse_apple_health(xml_path: Path) -> dict[str, dict[str, float]]:
 
             elif rec_type == "HKQuantityTypeIdentifierHeartRateVariabilitySDNN":
                 row["_hrv_values"].append(float(value))
+
+            elif rec_type == "HKQuantityTypeIdentifierBodyMass":
+                row["_weight_values"].append(float(value))
         except Exception:
             # Skip malformed records and continue full-file import.
             pass
@@ -118,21 +123,34 @@ def parse_apple_health(xml_path: Path) -> dict[str, dict[str, float]]:
         if row["_hrv_values"]:
             vals = row["_hrv_values"]
             payload["hrv_avg"] = round(sum(vals) / len(vals), 2)
+        if row["_weight_values"]:
+            vals = row["_weight_values"]
+            payload["weight"] = round(sum(vals) / len(vals), 2)
         if payload:
             finalized[day] = payload
 
     return finalized
 
 
-def write_daily_health(daily_payload: dict[str, dict[str, float]]) -> int:
+def write_daily_health(
+    daily_payload: dict[str, dict[str, float]],
+    limit_days: int | None = None,
+    limit_dates: set[str] | None = None,
+) -> int:
     if not INFLUXDB_TOKEN:
         raise RuntimeError("Missing InfluxDB token")
 
     client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
     write_api = client.write_api(write_options=SYNCHRONOUS)
 
+    to_write = daily_payload
+    if limit_dates:
+        to_write = {d: v for d, v in daily_payload.items() if d in limit_dates}
+    elif limit_days is not None and limit_days > 0:
+        sorted_days = sorted(daily_payload.keys(), reverse=True)
+        to_write = {d: daily_payload[d] for d in sorted_days[:limit_days]}
     try:
-        for day, fields in daily_payload.items():
+        for day, fields in to_write.items():
             ts = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
             point = Point("daily_health").tag("date", day).time(ts)
             for key, val in fields.items():
@@ -142,15 +160,38 @@ def write_daily_health(daily_payload: dict[str, dict[str, float]]) -> int:
         write_api.close()
         client.close()
 
-    return len(daily_payload)
+    return len(to_write)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sync Apple Health XML to InfluxDB.")
+    parser = argparse.ArgumentParser(
+        description="Sync Apple Health export.xml (sleep, steps, HR, HRV, weight) to InfluxDB daily_health.",
+        epilog="""
+Examples:
+  python3 apple_health_sync.py
+      Full sync of all data in export.
+  python3 apple_health_sync.py --days 2
+      Import only last 2 days (quick update after new export).
+  python3 apple_health_sync.py --xml /path/to/export.xml
+      Use custom export path.
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--xml",
         default="apple_health_export/export.xml",
         help="Path to Apple Health export.xml file",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="Import only last N days (quick update; omit for full sync)",
+    )
+    parser.add_argument(
+        "--dates",
+        nargs="*",
+        help="Import only specific dates (YYYY-MM-DD)",
     )
     args = parser.parse_args()
 
@@ -158,12 +199,15 @@ def main() -> None:
     if not xml_path.exists():
         raise FileNotFoundError(f"Apple Health file not found: {xml_path}")
 
+    limit_dates = set(args.dates) if args.dates else None
+    limit_days = args.days
+
     print(f"Reading Apple Health export: {xml_path}")
     daily = parse_apple_health(xml_path)
     print(f"Prepared {len(daily)} daily_health points")
-    written = write_daily_health(daily)
+    written = write_daily_health(daily, limit_days=limit_days, limit_dates=limit_dates)
     print(f"Wrote {written} daily_health points to InfluxDB bucket '{INFLUXDB_BUCKET}'")
-    fields = ["sleep_duration_hours", "steps", "resting_hr", "avg_hr", "hrv_avg"]
+    fields = ["sleep_duration_hours", "steps", "resting_hr", "avg_hr", "hrv_avg", "weight"]
     for f in fields:
         count = sum(1 for _, payload in daily.items() if f in payload)
         print(f"Days with {f}: {count}")

@@ -475,7 +475,19 @@ def write_to_influx(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Import exported Suunto data into InfluxDB.")
+    parser = argparse.ArgumentParser(
+        description="Import exported Suunto data (CSV/JSON/GPX/TCX/FIT) into InfluxDB.",
+        epilog="""
+Examples:
+  python3 sync_suunto.py
+      Import from suunto_export/ directory.
+  python3 sync_suunto.py --input-dir /path/to/exports
+      Use custom input directory.
+  python3 sync_suunto.py --dry-run
+      Parse files and show summary without writing.
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--input-dir",
         default="suunto_export",

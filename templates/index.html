@@ -1129,7 +1129,7 @@
                 workoutsRetryCount = 0;
                 return;
             }
-            if (isStale && workoutsRetryCount < 5) {
+            if (isStale && workoutsRetryCount < 10) {
                 const delay = Math.min(10000, 2000 * (workoutsRetryCount + 1));
                 workoutsRetryCount += 1;
                 setTimeout(() => {

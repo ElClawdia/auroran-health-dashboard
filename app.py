@@ -183,7 +183,7 @@ def _refresh_recent_workouts_cache_async(before_date: str | None):
         try:
             target = before_date or datetime.now().strftime("%Y-%m-%d")
             records = _fetch_workouts_recent_fast(target, 200)
-            if not records:
+            if not records or len(records) < 10:
                 records = _fetch_workouts_limited(target, 200)
             with _recent_workouts_lock:
                 _recent_workouts_cache["data"] = records

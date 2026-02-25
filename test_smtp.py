@@ -2,10 +2,9 @@
 """
 SMTP Configuration Test Script
 Tests that SMTP settings are correct and can send email.
-
-Usage: python test_smtp.py [recipient_email]
 """
 
+import argparse
 import sys
 import smtplib
 import ssl
@@ -161,6 +160,24 @@ Auroran Health Dashboard
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Test SMTP configuration and optionally send a test email.",
+        epilog="""
+Examples:
+  python3 test_smtp.py
+      Test config and connection only.
+  python3 test_smtp.py you@example.com
+      Send a test email to the specified address.
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "recipient",
+        nargs="?",
+        help="Email address to send test email to (optional)",
+    )
+    args = parser.parse_args()
+
     print("\n🦞 Auroran Health Dashboard - SMTP Test\n")
     
     # Check configuration
@@ -171,16 +188,14 @@ def main():
     if not test_smtp_connection():
         sys.exit(1)
     
-    # Send test email if recipient provided
-    if len(sys.argv) > 1:
-        recipient = sys.argv[1]
-        if not send_test_email(recipient):
+    if args.recipient:
+        if not send_test_email(args.recipient):
             sys.exit(1)
         print("\n✓ All tests passed!")
     else:
         print("\n✓ Connection test passed!")
         print("\nTo send a test email, run:")
-        print(f"  python {sys.argv[0]} your@email.com")
+        print("  python3 test_smtp.py you@example.com")
 
 
 if __name__ == "__main__":
