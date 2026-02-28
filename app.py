@@ -949,14 +949,22 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
     ]
     field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
     def _fetch_range(measurement: str, lookback_days: int) -> list[dict]:
-        cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
-        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
         if before_date:
-            date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
+            try:
+                target_date = datetime.strptime(before_date, "%Y-%m-%d").date()
+            except ValueError:
+                target_date = datetime.now().date()
+            cutoff_date = target_date - timedelta(days=lookback_days)
+            date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}" and r.date <= "{before_date}")'
+            range_days = min(max((datetime.now().date() - cutoff_date).days, lookback_days), 4000)
+        else:
+            cutoff_date = datetime.now().date() - timedelta(days=lookback_days)
+            date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}")'
+            range_days = lookback_days
 
         start_query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{lookback_days}d)
+          |> range(start: -{range_days}d)
           |> filter(fn: (r) => r._measurement == "{measurement}")
           |> filter(fn: (r) => r._field == "start_time")
           {date_filter}
@@ -984,7 +992,7 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
         workouts = {}
         detail_query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{lookback_days}d)
+          |> range(start: -{range_days}d)
           |> filter(fn: (r) => r._measurement == "{measurement}")
           |> filter(fn: (r) => {field_filter})
           |> filter(fn: (r) => {time_filters})
@@ -1113,6 +1121,16 @@ def workouts():
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
+            # If requesting an old date, bypass recent cache and query directly
+            if before_date:
+                try:
+                    target_date = datetime.strptime(before_date, "%Y-%m-%d").date()
+                    if (datetime.now().date() - target_date).days > WORKOUT_LOOKBACK_DAYS:
+                        records = _fetch_workouts_limited(before_date, limit or 10)
+                        return jsonify(records)
+                except ValueError:
+                    pass
+
             # Fast path for dashboard: serve from recent cache, refresh in background
             if before_date and limit and limit <= 10:
                 cached, stale = _get_recent_workouts_from_cache(before_date, limit)
