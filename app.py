@@ -962,57 +962,27 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
             date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}")'
             range_days = lookback_days
 
-        start_query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{range_days}d)
-          |> filter(fn: (r) => r._measurement == "{measurement}")
-          |> filter(fn: (r) => r._field == "start_time")
-          {date_filter}
-        '''
-        start_rows = []
-        for record in query_api.query_stream(start_query):
-            start_rows.append({
-                "_time": record.get_time(),
-                "date": record.values.get("date", ""),
-                "type": record.values.get("type", ""),
-                "start_time": record.get_value(),
-            })
-        if not start_rows:
-            return []
-
-        start_rows = sorted(
-            start_rows,
-            key=lambda x: (x.get("date", ""), x.get("start_time", "")),
-            reverse=True,
-        )[:limit]
-        time_filters = " or ".join([f'r._time == time(v: "{r["_time"].isoformat()}")' for r in start_rows])
-        if not time_filters:
-            return []
-
-        workouts = {}
-        detail_query = f'''
+        query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: -{range_days}d)
           |> filter(fn: (r) => r._measurement == "{measurement}")
           |> filter(fn: (r) => {field_filter})
-          |> filter(fn: (r) => {time_filters})
+          {date_filter}
         '''
-        for record in query_api.query_stream(detail_query):
+        workouts = {}
+        for record in query_api.query_stream(query):
             key = str(record.get_time())
             entry = workouts.setdefault(
                 key,
-                {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
+                {
+                    "date": record.values.get("date", ""),
+                    "type": record.values.get("type", ""),
+                },
             )
             entry[record.get_field()] = record.get_value()
 
-        for row in start_rows:
-            key = str(row["_time"])
-            entry = workouts.setdefault(
-                key,
-                {"date": row.get("date", ""), "type": row.get("type", "")},
-            )
-            if not entry.get("start_time"):
-                entry["start_time"] = row.get("start_time", "")
+        if not workouts:
+            return []
 
         records = list(workouts.values())
         records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
@@ -1020,13 +990,9 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
 
     for measurement in ["workout_cache", "workouts"]:
         try:
-            records = _fetch_range(measurement, 14)
-            if len(records) >= limit:
-                return records[:limit]
+            records = _fetch_range(measurement, 42)
             if records:
-                wider = _fetch_range(measurement, WORKOUT_LOOKBACK_DAYS)
-                if wider:
-                    return wider[:limit]
+                return records[:limit]
         except Exception:
             continue
 
