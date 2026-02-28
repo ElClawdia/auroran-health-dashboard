@@ -195,31 +195,36 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
         
         print(f"Synced {synced} new, skipped {skipped} existing")
 
-        # Write recent workouts cache to disk for fast dashboard loads
+        # Write recent workouts cache to disk using Influx data (not just latest API results)
         try:
-            if activities:
-                recent = []
-                seen = set()
-                for activity in activities:
-                    strava_id = str(activity.get("id", ""))
-                    if strava_id in seen:
-                        continue
-                    seen.add(strava_id)
-                    recent.append({
-                        "date": activity.get("date", ""),
-                        "type": activity.get("type", ""),
-                        "duration": activity.get("duration"),
-                        "duration_minutes": activity.get("duration"),
-                        "avg_hr": activity.get("avg_hr"),
-                        "max_hr": activity.get("max_hr"),
-                        "calories": activity.get("calories"),
-                        "suffer_score": activity.get("suffer_score"),
-                        "distance": activity.get("distance"),
-                        "elevation_gain": activity.get("elevation_gain"),
-                        "start_time": activity.get("time", ""),
-                        "name": activity.get("name", ""),
-                        "strava_id": strava_id,
-                    })
+            fields = [
+                "duration", "duration_minutes", "avg_hr", "max_hr", "calories",
+                "suffer_score", "distance", "elevation_gain", "start_time", "time",
+                "name", "strava_id", "feeling", "intensity"
+            ]
+            field_filter = " or ".join([f'r._field == \"{f}\"' for f in fields])
+            cutoff = (datetime.now() - timedelta(days=42)).strftime("%Y-%m-%d")
+            recent_workouts = {}
+            for measurement in ["workout_cache", "workouts"]:
+                cache_query = f'''
+                from(bucket: \"{INFLUXDB_BUCKET}\")
+                  |> range(start: -42d)
+                  |> filter(fn: (r) => r._measurement == \"{measurement}\")
+                  |> filter(fn: (r) => {field_filter})
+                  |> filter(fn: (r) => r.date >= \"{cutoff}\")
+                '''
+                for record in query_api.query_stream(cache_query):
+                    key = str(record.get_time())
+                    entry = recent_workouts.setdefault(
+                        key,
+                        {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
+                    )
+                    entry[record.get_field()] = record.get_value()
+                if recent_workouts:
+                    break
+
+            if recent_workouts:
+                recent = list(recent_workouts.values())
                 recent = sorted(recent, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
                 payload = {
                     "loaded_at": datetime.now().isoformat(),
