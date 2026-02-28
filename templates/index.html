@@ -1460,16 +1460,19 @@
                     const tsb = data.tsb;
                     tsbValue.textContent = tsb > 0 ? '+' + tsb : tsb;
                     
-                    // Color code based on TSB
+                    // Color code based on TSB (Suunto zones)
                     if (tsb > 10) {
-                        tsbCard.style.borderColor = '#3fb950'; // Green - fresh
-                        tsbStatus.innerHTML = '<span style="color: #3fb950;">' + data.status + '</span>';
-                    } else if (tsb > -10) {
-                        tsbCard.style.borderColor = '#d29922'; // Yellow - balanced
-                        tsbStatus.innerHTML = '<span style="color: #d29922;">' + data.status + '</span>';
+                        tsbCard.style.borderColor = '#f59e0b'; // Amber - losing fitness
+                        tsbStatus.innerHTML = '<span style="color: #f59e0b;">' + data.status + '</span>';
+                    } else if (tsb >= -10) {
+                        tsbCard.style.borderColor = '#3b82f6'; // Blue - maintaining fitness
+                        tsbStatus.innerHTML = '<span style="color: #3b82f6;">' + data.status + '</span>';
+                    } else if (tsb >= -30) {
+                        tsbCard.style.borderColor = '#22c55e'; // Green - productive training
+                        tsbStatus.innerHTML = '<span style="color: #22c55e;">' + data.status + '</span>';
                     } else {
-                        tsbCard.style.borderColor = '#f85149'; // Red - fatigued
-                        tsbStatus.innerHTML = '<span style="color: #f85149;">' + data.status + '</span>';
+                        tsbCard.style.borderColor = '#ef4444'; // Red - going too hard
+                        tsbStatus.innerHTML = '<span style="color: #ef4444;">' + data.status + '</span>';
                     }
                 } else {
                     tsbValue.textContent = '--';
