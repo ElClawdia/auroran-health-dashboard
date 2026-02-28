@@ -203,15 +203,15 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
     latest = pmc_series[-1]
     tsb = latest["tsb"]
     
-    # Determine status
+    # Determine status (aligned to Suunto-style zones)
     if tsb > 10:
-        status = "Fresh 🏃"
-    elif tsb > -10:
-        status = "Balanced ⚖️"
-    elif tsb > -30:
-        status = "Fatigued 😴"
+        status = "Recovering / Resting"
+    elif tsb >= -10:
+        status = "Productive Training"
+    elif tsb >= -30:
+        status = "Maintaining Fitness"
     else:
-        status = "Overreaching ⚠️"
+        status = "Going Too Hard"
     
     return {
         "ctl": latest["ctl"],
@@ -223,29 +223,23 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
 
 def get_status_description(tsb: float) -> str:
     """Get human-readable description of TSB"""
-    if tsb > 20:
-        return "Peak form - Great for races! 🏆"
-    elif tsb > 10:
-        return "Fresh - Ready for high intensity 🏃"
-    elif tsb > 0:
-        return "Prepared - Good for training 💪"
-    elif tsb > -10:
-        return "Moderately tired - Easy training recommended ⚖️"
-    elif tsb > -25:
-        return "Fatigued - Rest or very easy sessions 😴"
-    else:
-        return "Overreaching - Take a rest day! ⚠️"
+    if tsb > 10:
+        return "Recovering / Resting - short-term freshness before races"
+    if tsb >= -10:
+        return "Productive Training - adding load in a manageable way"
+    if tsb >= -30:
+        return "Maintaining Fitness - load roughly in balance"
+    return "Going Too Hard - risk of illness/injury, take a step back"
 
 
 # Zone descriptions
 def get_pmc_zones() -> Dict:
     """Get PMC zone descriptions"""
     return {
-        "peak": {"tsb_min": 20, "color": "#22c55e", "desc": "Peak Form"},
-        "fresh": {"tsb_min": 10, "color": "#84cc16", "desc": "Fresh"},
-        "optimal": {"tsb_min": 0, "color": "#eab308", "desc": "Optimal"},
-        "training": {"tsb_min": -10, "color": "#f97316", "desc": "Training"},
-        "overreaching": {"tsb_min": float("-inf"), "color": "#ef4444", "desc": "Overreaching"}
+        "recovering": {"tsb_min": 10, "color": "#22c55e", "desc": "Recovering / Resting"},
+        "productive": {"tsb_min": -10, "color": "#84cc16", "desc": "Productive Training"},
+        "maintaining": {"tsb_min": -30, "color": "#eab308", "desc": "Maintaining Fitness"},
+        "going_too_hard": {"tsb_min": float("-inf"), "color": "#ef4444", "desc": "Going Too Hard"}
     }
 
 
