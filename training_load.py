@@ -203,13 +203,13 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
     latest = pmc_series[-1]
     tsb = latest["tsb"]
     
-    # Determine status (aligned to Suunto-style zones)
+    # Determine status (Suunto Form zones)
     if tsb > 10:
-        status = "Recovering / Resting"
+        status = "Losing Fitness"
     elif tsb >= -10:
-        status = "Productive Training"
-    elif tsb >= -30:
         status = "Maintaining Fitness"
+    elif tsb >= -30:
+        status = "Productive Training"
     else:
         status = "Going Too Hard"
     
@@ -224,11 +224,11 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
 def get_status_description(tsb: float) -> str:
     """Get human-readable description of TSB"""
     if tsb > 10:
-        return "Recovering / Resting - short-term freshness before races"
+        return "Losing Fitness - short-term freshness before races"
     if tsb >= -10:
-        return "Productive Training - adding load in a manageable way"
-    if tsb >= -30:
         return "Maintaining Fitness - load roughly in balance"
+    if tsb >= -30:
+        return "Productive Training - adding load in a manageable way"
     return "Going Too Hard - risk of illness/injury, take a step back"
 
 
@@ -236,9 +236,9 @@ def get_status_description(tsb: float) -> str:
 def get_pmc_zones() -> Dict:
     """Get PMC zone descriptions"""
     return {
-        "recovering": {"tsb_min": 10, "color": "#22c55e", "desc": "Recovering / Resting"},
-        "productive": {"tsb_min": -10, "color": "#84cc16", "desc": "Productive Training"},
-        "maintaining": {"tsb_min": -30, "color": "#eab308", "desc": "Maintaining Fitness"},
+        "losing_fitness": {"tsb_min": 10, "color": "#22c55e", "desc": "Losing Fitness"},
+        "maintaining": {"tsb_min": -10, "color": "#84cc16", "desc": "Maintaining Fitness"},
+        "productive": {"tsb_min": -30, "color": "#eab308", "desc": "Productive Training"},
         "going_too_hard": {"tsb_min": float("-inf"), "color": "#ef4444", "desc": "Going Too Hard"}
     }
 
