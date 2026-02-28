@@ -236,9 +236,9 @@ def get_status_description(tsb: float) -> str:
 def get_pmc_zones() -> Dict:
     """Get PMC zone descriptions"""
     return {
-        "losing_fitness": {"tsb_min": 10, "color": "#22c55e", "desc": "Losing Fitness"},
-        "maintaining": {"tsb_min": -10, "color": "#84cc16", "desc": "Maintaining Fitness"},
-        "productive": {"tsb_min": -30, "color": "#eab308", "desc": "Productive Training"},
+        "losing_fitness": {"tsb_min": 10, "color": "#f59e0b", "desc": "Losing Fitness"},
+        "maintaining": {"tsb_min": -10, "color": "#3b82f6", "desc": "Maintaining Fitness"},
+        "productive": {"tsb_min": -30, "color": "#22c55e", "desc": "Productive Training"},
         "going_too_hard": {"tsb_min": float("-inf"), "color": "#ef4444", "desc": "Going Too Hard"}
     }
 
