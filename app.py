@@ -1748,7 +1748,7 @@ def _dash_fetch_recommendations(date: str) -> dict:
         return {"error": str(e)}
 
 
-def _dash_fetch_pmc(days: int, end_date_str: str) -> dict:
+def _dash_fetch_pmc(days: int, end_date_str: str, user: dict | None = None) -> dict:
     """Fetch PMC data. Thread-safe."""
     if not query_api:
         return {"error": "No training load data from InfluxDB"}
@@ -1765,7 +1765,6 @@ def _dash_fetch_pmc(days: int, end_date_str: str) -> dict:
         while cur <= end_date:
             full_series.append({"date": cur.isoformat(), "load": loads_map.get(cur.isoformat(), 0.0)})
             cur += timedelta(days=1)
-        user = get_current_user()
         params = _get_pmc_params_for_user(user)
         pmc_series = calculate_pmc_series(
             full_series,
@@ -2167,10 +2166,11 @@ def api_dashboard_charts():
         if now < expires:
             return jsonify(cached)
         del _dashboard_cache[cache_key]
+    user = get_current_user()
     with ThreadPoolExecutor(max_workers=2) as ex:
         futures = {
             ex.submit(_dash_fetch_health_history, days, date): "history",
-            ex.submit(_dash_fetch_pmc, days, date): "pmc",
+            ex.submit(_dash_fetch_pmc, days, date, user): "pmc",
         }
         out = {}
         for fut in as_completed(futures):
@@ -2199,12 +2199,13 @@ def api_dashboard():
             return jsonify(cached)
         del _dashboard_cache[cache_key]
     out = {}
+    user = get_current_user()
     with ThreadPoolExecutor(max_workers=7) as ex:
         futures = {
             ex.submit(_dash_fetch_health_today, date): "health",
             ex.submit(_dash_fetch_health_history, days, date): "history",
             ex.submit(_dash_fetch_recommendations, date): "recommendation",
-            ex.submit(_dash_fetch_pmc, days, date): "pmc",
+            ex.submit(_dash_fetch_pmc, days, date, user): "pmc",
             ex.submit(_dash_fetch_workouts, date, 10): "workouts",
             ex.submit(_dash_fetch_calories, date, user): "calories",
             ex.submit(_dash_fetch_weight, date): "weight",
