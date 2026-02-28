@@ -20,13 +20,13 @@ try:
     from formula_learning import load_params
     _params = load_params()
 except ImportError:
-    _params = {"ctl_days": 42, "atl_days": 7, "load_scale_factor": 1.27}
+    _params = {"ctl_days": 60, "atl_days": 7, "load_scale_factor": 1.4}
 
 # PMC constants - can be overridden by learned values
 # Empirically calibrated against multiple reference points from Strava:
 #   12/02: CTL=30, ATL=40 | 01/01: CTL=27, ATL=25 | 01/29: CTL=50, ATL=85
 #   02/18: CTL=46, ATL=40 | Current: CTL=47, ATL=43
-CTL_DAYS = _params.get("ctl_days", 42)  # Chronic Training Load period (τ)
+CTL_DAYS = _params.get("ctl_days", 60)  # Chronic Training Load period (τ)
 ATL_DAYS = _params.get("atl_days", 7)   # Acute Training Load period (τ)
 # EWMA decay: k = 1 - exp(-1/τ)
 CTL_K = 1 - math.exp(-1 / CTL_DAYS)   # ≈ 0.0235
@@ -34,7 +34,7 @@ ATL_K = 1 - math.exp(-1 / ATL_DAYS)   # ≈ 0.133
 
 # Load scaling factor to align with Strava's PMC display
 # Strava's "Relative Effort" (suffer_score) needs ~1.27x scaling for PMC
-LOAD_SCALE_FACTOR = _params.get("load_scale_factor", 1.27)
+LOAD_SCALE_FACTOR = _params.get("load_scale_factor", 1.4)
 
 
 def reload_params():
