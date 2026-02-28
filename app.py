@@ -266,6 +266,15 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
         stale = True
     return filtered[:limit], (stale or loading)
 
+
+def _get_pmc_params_for_user(user: dict | None) -> dict:
+    style = (user or {}).get("pmc_style", "native")
+    if style == "suunto":
+        return {"ctl_days": 60, "atl_days": 7, "load_scale_factor": 1.4}
+    if style == "strava":
+        return {"ctl_days": 42, "atl_days": 7, "load_scale_factor": 1.27}
+    return {"ctl_days": 42, "atl_days": 7, "load_scale_factor": 1.0}
+
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 42
 HEALTH_LOOKBACK_DAYS = 42
@@ -505,6 +514,8 @@ def account_page():
                 pass
         if data.get('timezone'):
             updates['timezone'] = data['timezone']
+        if data.get('pmc_style'):
+            updates['pmc_style'] = data['pmc_style']
         
         if updates:
             update_user(session['user'], updates)
@@ -627,7 +638,8 @@ def api_user():
             "height_cm": user.get("height_cm"),
             "initial_weight_kg": user.get("initial_weight_kg"),
             "timezone": user.get("timezone"),
-            "profile_image": user.get("profile_image")
+            "profile_image": user.get("profile_image"),
+            "pmc_style": user.get("pmc_style", "native")
         })
     return jsonify({"error": "Not logged in"}), 401
 
@@ -1753,7 +1765,14 @@ def _dash_fetch_pmc(days: int, end_date_str: str) -> dict:
         while cur <= end_date:
             full_series.append({"date": cur.isoformat(), "load": loads_map.get(cur.isoformat(), 0.0)})
             cur += timedelta(days=1)
-        pmc_series = calculate_pmc_series(full_series)
+        user = get_current_user()
+        params = _get_pmc_params_for_user(user)
+        pmc_series = calculate_pmc_series(
+            full_series,
+            ctl_days=params["ctl_days"],
+            atl_days=params["atl_days"],
+            load_scale_factor=params["load_scale_factor"],
+        )
         pmc_recent = pmc_series[-days:]
         latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
         return {
@@ -2267,7 +2286,14 @@ def pmc():
         full_series.append({"date": ds, "load": loads_map.get(ds, 0.0)})
         cur += timedelta(days=1)
 
-    pmc_series = calculate_pmc_series(full_series)
+    user = get_current_user()
+    params = _get_pmc_params_for_user(user)
+    pmc_series = calculate_pmc_series(
+        full_series,
+        ctl_days=params["ctl_days"],
+        atl_days=params["atl_days"],
+        load_scale_factor=params["load_scale_factor"],
+    )
     
     # Update cache only if querying for today
     if is_today:

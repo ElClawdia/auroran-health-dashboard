@@ -150,6 +150,7 @@ def calculate_pmc_series(
     full_series: List[Dict],
     ctl_days: int = CTL_DAYS,
     atl_days: int = ATL_DAYS,
+    load_scale_factor: float = LOAD_SCALE_FACTOR,
 ) -> List[Dict]:
     """
     Calculate CTL, ATL, TSB for each day using EWMA.
@@ -168,7 +169,7 @@ def calculate_pmc_series(
 
     result = []
     for day in full_series:
-        load = day.get("load", 0.0) * LOAD_SCALE_FACTOR
+        load = day.get("load", 0.0) * load_scale_factor
         ctl = ctl * (1 - k_ctl) + load * k_ctl
         atl = atl * (1 - k_atl) + load * k_atl
         tsb = ctl - atl

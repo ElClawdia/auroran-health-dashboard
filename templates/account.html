@@ -224,6 +224,24 @@
                     <label for="timezone">Time Zone</label>
                     <input type="text" id="timezone" name="timezone" placeholder="Europe/Helsinki" value="{{ user.timezone or '' }}">
                 </div>
+
+                <div class="form-group">
+                    <label>PMC Formula Style</label>
+                    <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                        <label>
+                            <input type="radio" name="pmc_style" value="suunto" {% if user.pmc_style == 'suunto' %}checked{% endif %}>
+                            Suunto style ATL/CTL
+                        </label>
+                        <label>
+                            <input type="radio" name="pmc_style" value="strava" {% if user.pmc_style == 'strava' %}checked{% endif %}>
+                            Strava style ATL/CTL
+                        </label>
+                        <label>
+                            <input type="radio" name="pmc_style" value="native" {% if user.pmc_style == 'native' or not user.pmc_style %}checked{% endif %}>
+                            Native ATL/CTL
+                        </label>
+                    </div>
+                </div>
                 
                 <div class="form-actions">
                     <button type="submit" class="btn">Save Changes</button>
@@ -255,7 +273,8 @@
                 dob: document.getElementById('dob').value,
                 height_cm: document.getElementById('height_cm').value,
                 initial_weight_kg: document.getElementById('initial_weight_kg').value,
-                timezone: document.getElementById('timezone').value
+                timezone: document.getElementById('timezone').value,
+                pmc_style: document.querySelector('input[name="pmc_style"]:checked')?.value || 'native'
             };
             
             try {
