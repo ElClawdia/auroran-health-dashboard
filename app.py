@@ -270,10 +270,10 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
 def _get_pmc_params_for_user(user: dict | None) -> dict:
     style = (user or {}).get("pmc_style", "native")
     if style == "suunto":
-        return {"ctl_days": 60, "atl_days": 7, "load_scale_factor": 1.4}
+        return {"ctl_days": 70, "atl_days": 10, "load_scale_factor": 1.5}
     if style == "strava":
-        return {"ctl_days": 42, "atl_days": 7, "load_scale_factor": 1.27}
-    return {"ctl_days": 42, "atl_days": 7, "load_scale_factor": 1.0}
+        return {"ctl_days": 40, "atl_days": 10, "load_scale_factor": 1.26}
+    return {"ctl_days": 55, "atl_days": 10, "load_scale_factor": 1.38}
 
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 42
