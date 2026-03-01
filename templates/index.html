@@ -1451,19 +1451,27 @@
                 return '#ef4444'; // red
             }
 
-            // CTL (Fitness) - 42 day average - only update if no manual value
+            // CTL (Fitness) - 42 day average
             if (!shouldUseManual('ctl')) {
                 document.getElementById('ctl-value').textContent = data.ctl || '--';
-                if (ctlCard && data.ctl !== undefined && data.ctl !== null) {
-                    ctlCard.style.borderColor = getLoadColor(data.ctl);
+            }
+            // Always color by currently shown CTL value (auto or manual)
+            if (ctlCard) {
+                const shownCtl = parseFloat(document.getElementById('ctl-value').textContent);
+                if (!Number.isNaN(shownCtl)) {
+                    ctlCard.style.borderColor = getLoadColor(shownCtl);
                 }
             }
             
-            // ATL (Strain) - 7 day average - only update if no manual value
+            // ATL (Strain) - 7 day average
             if (!shouldUseManual('atl')) {
                 document.getElementById('atl-value').textContent = data.atl || '--';
-                if (atlCard && data.atl !== undefined && data.atl !== null) {
-                    atlCard.style.borderColor = getLoadColor(data.atl);
+            }
+            // Always color by currently shown ATL value (auto or manual)
+            if (atlCard) {
+                const shownAtl = parseFloat(document.getElementById('atl-value').textContent);
+                if (!Number.isNaN(shownAtl)) {
+                    atlCard.style.borderColor = getLoadColor(shownAtl);
                 }
             }
             
