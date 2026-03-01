@@ -38,6 +38,7 @@ ALLOWED_PROFILE_EXTS = {"png", "jpg", "jpeg", "webp"}
 RECENT_WORKOUTS_CACHE_FILE = log_dir / "recent_workouts_cache.json"
 RECENT_WORKOUTS_CACHE_TTL_SECONDS = 300
 ENABLE_INFLUX_WORKOUT_REFRESH = os.getenv("ENABLE_INFLUX_WORKOUT_REFRESH", "1") == "1"
+WORKOUT_READ_MEASUREMENT = "workout_cache"
 
 # Setup logging
 logging.basicConfig(
@@ -202,13 +203,6 @@ def _fetch_workouts_recent_fast(before_date: str | None, limit: int) -> list[dic
     """Fast-path fetch from workout_cache using limited _time sort."""
     if not query_api:
         return []
-
-    fields = [
-        "duration", "duration_minutes", "avg_hr", "max_hr", "calories",
-        "suffer_score", "distance", "elevation_gain", "start_time", "time",
-        "name", "strava_id", "feeling", "intensity"
-    ]
-    field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
     cutoff = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
     date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
     if before_date:
@@ -217,8 +211,7 @@ def _fetch_workouts_recent_fast(before_date: str | None, limit: int) -> list[dic
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -14d)
-      |> filter(fn: (r) => r._measurement == "workout_cache")
-      |> filter(fn: (r) => {field_filter})
+      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
       {date_filter}
     '''
     workouts = {}
@@ -913,30 +906,24 @@ def _fetch_workouts_from_influx(before_date: str | None = None):
     if before_date:
         date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
 
-    # Try workout_cache first (optimized, fewer records)
-    # Fall back to workouts measurement if cache doesn't exist
-    for measurement in ["workout_cache", "workouts"]:
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{range_days}d)
-          |> filter(fn: (r) => r._measurement == "{measurement}")
-          {date_filter}
-        '''
-        
-        tables = query_api.query_stream(query)
-        
-        # Manual pivot in Python using _time as unique key
-        workouts = defaultdict(dict)
-        for record in tables:
-            key = str(record.get_time())
-            field = record.get_field()
-            value = record.get_value()
-            workouts[key][field] = value
-            workouts[key]['date'] = record.values.get('date', '')
-            workouts[key]['type'] = record.values.get('type', '')
-        
-        if workouts:
-            break
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -{range_days}d)
+      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
+      {date_filter}
+    '''
+
+    tables = query_api.query_stream(query)
+
+    # Manual pivot in Python using _time as unique key
+    workouts = defaultdict(dict)
+    for record in tables:
+        key = str(record.get_time())
+        field = record.get_field()
+        value = record.get_value()
+        workouts[key][field] = value
+        workouts[key]['date'] = record.values.get('date', '')
+        workouts[key]['type'] = record.values.get('type', '')
     
     # Sort by date and start_time descending
     result = sorted(
@@ -977,62 +964,43 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
     """Fetch only the most recent workouts (limited) using stream query."""
     if not query_api:
         return []
-
-    fields = [
-        "duration", "duration_minutes", "avg_hr", "max_hr", "calories",
-        "suffer_score", "distance", "elevation_gain", "start_time", "time",
-        "name", "strava_id", "feeling", "intensity"
-    ]
-    field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
-    def _fetch_range(measurement: str, lookback_days: int) -> list[dict]:
-        if before_date:
-            try:
-                target_date = datetime.strptime(before_date, "%Y-%m-%d").date()
-            except ValueError:
-                target_date = datetime.now().date()
-            cutoff_date = target_date - timedelta(days=lookback_days)
-            date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}" and r.date <= "{before_date}")'
-            range_days = min(max((datetime.now().date() - cutoff_date).days, lookback_days), 4000)
-        else:
-            cutoff_date = datetime.now().date() - timedelta(days=lookback_days)
-            date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}")'
-            range_days = lookback_days
-
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: -{range_days}d)
-          |> filter(fn: (r) => r._measurement == "{measurement}")
-          |> filter(fn: (r) => {field_filter})
-          {date_filter}
-        '''
-        workouts = {}
-        for record in query_api.query_stream(query):
-            key = str(record.get_time())
-            entry = workouts.setdefault(
-                key,
-                {
-                    "date": record.values.get("date", ""),
-                    "type": record.values.get("type", ""),
-                },
-            )
-            entry[record.get_field()] = record.get_value()
-
-        if not workouts:
-            return []
-
-        records = list(workouts.values())
-        records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
-        return _dedupe_workouts(records)[:limit]
-
-    for measurement in ["workout_cache", "workouts"]:
+    if before_date:
         try:
-            records = _fetch_range(measurement, 42)
-            if records:
-                return records[:limit]
-        except Exception:
-            continue
+            target_date = datetime.strptime(before_date, "%Y-%m-%d").date()
+        except ValueError:
+            target_date = datetime.now().date()
+        cutoff_date = target_date - timedelta(days=42)
+        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}" and r.date <= "{before_date}")'
+        range_days = min(max((datetime.now().date() - cutoff_date).days, 42), 4000)
+    else:
+        cutoff_date = datetime.now().date() - timedelta(days=42)
+        date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}")'
+        range_days = 42
 
-    return []
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -{range_days}d)
+      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
+      {date_filter}
+    '''
+    workouts = {}
+    for record in query_api.query_stream(query):
+        key = str(record.get_time())
+        entry = workouts.setdefault(
+            key,
+            {
+                "date": record.values.get("date", ""),
+                "type": record.values.get("type", ""),
+            },
+        )
+        entry[record.get_field()] = record.get_value()
+
+    if not workouts:
+        return []
+
+    records = list(workouts.values())
+    records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    return _dedupe_workouts(records)[:limit]
 
 
 def _load_workout_index() -> None:
@@ -1044,18 +1012,11 @@ def _load_workout_index() -> None:
 
     from collections import defaultdict
 
-    fields = [
-        "duration", "duration_minutes", "avg_hr", "max_hr", "calories",
-        "suffer_score", "distance", "elevation_gain", "start_time", "time",
-        "name", "strava_id", "feeling", "intensity"
-    ]
-    field_filter = " or ".join([f'r._field == "{f}"' for f in fields])
     cutoff = (datetime.now() - timedelta(days=WORKOUT_INDEX_RANGE_DAYS)).strftime('%Y-%m-%d')
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{WORKOUT_INDEX_RANGE_DAYS}d)
-      |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
-      |> filter(fn: (r) => {field_filter})
+      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
       |> filter(fn: (r) => r.date >= "{cutoff}")
     '''
 
@@ -1150,60 +1111,17 @@ def workouts():
                     resp.headers["Retry-After"] = "5"
                 return resp
 
-            # Fast path: use in-memory index for date-filtered requests
+            # Keep filtered reads off the slow index build path.
             if before_date or filter_date:
-                index = _ensure_workout_index_loaded()
-                if index:
-                    records = []
-                    for w in index:
-                        d = w.get('date', '')
-                        if not d:
-                            continue
-                        if filter_date and d != filter_date:
-                            continue
-                        if before_date and d > before_date:
-                            continue
-                        records.append(w)
-                        if limit and limit > 0 and len(records) >= limit:
-                            break
-                    return jsonify(records)
-
-                # If index not ready, use limited query for dashboard requests
-                if before_date and limit and limit <= 10:
-                    records = _fetch_workouts_limited(before_date, limit)
-                    return jsonify(records)
-
-                if index is None:
-                    # If index is still loading for too long, fallback to direct query
-                    with _workout_index_lock:
-                        loading_started_at = _workout_index.get("loading_started_at")
-                    if loading_started_at and (datetime.now() - loading_started_at).total_seconds() > 15:
-                        logger.warning("Workout index slow to load; falling back to direct query")
-                        records = _fetch_workouts_from_influx(before_date=before_date)
-                        if filter_date:
-                            records = [w for w in records if w.get('date') == filter_date]
-                        elif before_date:
-                            records = [w for w in records if w.get('date', '') <= before_date]
-                        if limit and limit > 0:
-                            records = records[:limit]
-                        return jsonify(records)
-
-                    resp = jsonify({"loading": True})
-                    resp.status_code = 503
-                    resp.headers["Retry-After"] = "3"
-                    return resp
-                records = []
-                for w in index:
-                    d = w.get('date', '')
-                    if not d:
-                        continue
-                    if filter_date and d != filter_date:
-                        continue
-                    if before_date and d > before_date:
-                        continue
-                    records.append(w)
-                    if limit and limit > 0 and len(records) >= limit:
-                        break
+                query_limit = limit if limit and limit > 0 else 50
+                target_date = before_date or filter_date
+                records = _fetch_workouts_limited(target_date, query_limit)
+                if filter_date:
+                    records = [w for w in records if w.get('date') == filter_date]
+                elif before_date:
+                    records = [w for w in records if w.get('date', '') <= before_date]
+                if limit and limit > 0:
+                    records = records[:limit]
                 return jsonify(records)
 
             # Check cache first (only if no filters)
@@ -1483,9 +1401,11 @@ def weight():
             return jsonify({"error": "Missing weight value"}), 400
         
         try:
+            target_dt = datetime.strptime(date, "%Y-%m-%d").replace(hour=12, minute=0, second=0)
             point = Point("manual_values")\
                 .tag("date", date)\
-                .field("weight", float(weight_val))
+                .field("weight", float(weight_val))\
+                .time(target_dt)
             
             write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
             _weight_cache.pop(date, None)  # Invalidate cache
@@ -1615,45 +1535,25 @@ def strava_sync():
 def _fetch_daily_loads_from_influx(query_days=120):
     """Fetch daily training loads from InfluxDB.
 
-    Uses both `workouts` and `workout_cache` and de-duplicates by activity id/time,
-    then sums daily suffer_score (Strava Relative Effort).
+    Reads the canonical workout cache and sums daily suffer_score
+    (Strava Relative Effort).
     """
     from collections import defaultdict
 
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{query_days}d)
-      |> filter(fn: (r) => r._measurement == "workouts" or r._measurement == "workout_cache")
-      |> filter(fn: (r) => r._field == "suffer_score" or r._field == "strava_id" or r._field == "start_time")
+      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
+      |> filter(fn: (r) => r._field == "suffer_score")
     '''
 
     tables = query_api.query_stream(query)
-
-    # Build per-activity records first, then dedupe, then daily sum.
-    by_activity = defaultdict(dict)
-    for record in tables:
-        key = str(record.get_time())
-        field = record.get_field()
-        by_activity[key][field] = record.get_value()
-        by_activity[key]['date'] = record.values.get('date', '')
-
-    seen = set()
     by_date = defaultdict(float)
-
-    for rec in by_activity.values():
-        date = rec.get('date', '')
-        if not date:
-            continue
-
-        strava_id = rec.get('strava_id')
-        start_time = rec.get('start_time')
-        dedupe_key = f"strava:{strava_id}" if strava_id else f"{date}|{start_time or ''}"
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-
-        load = rec.get('suffer_score') or 0
-        by_date[date] += float(load)
+    for record in tables:
+        date = record.values.get('date', '')
+        load = record.get_value() or 0
+        if date:
+            by_date[date] += float(load)
 
     return [{"date": d, "load": l} for d, l in sorted(by_date.items())]
 
@@ -1849,13 +1749,7 @@ def _dash_fetch_workouts(before_date: str, limit: int = 10) -> list | dict:
     if not query_api:
         return []
     try:
-        records = _fetch_workouts_from_influx(before_date=before_date)
-        if not records:
-            return []
-        records = [w for w in records if w.get('date', '') <= before_date]
-        if limit and limit > 0:
-            records = records[:limit]
-        return records
+        return _fetch_workouts_limited(before_date, limit)
     except Exception as e:
         logger.error(f"Dashboard workouts error: {e}")
         return []
@@ -1932,7 +1826,7 @@ def _get_workout_calories(date: str, weight_kg: float | None = None) -> float:
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -30d)
-      |> filter(fn: (r) => r._measurement == "workout_cache" or r._measurement == "workouts")
+      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
       |> filter(fn: (r) => r.date == "{date}")
       |> drop(columns: ["date"])
       |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
