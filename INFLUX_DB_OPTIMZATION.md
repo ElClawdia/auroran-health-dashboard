@@ -607,6 +607,32 @@ This is optional because current `daily_health` performance is already good.
 7. Switch all workout reads to only the rebuilt `workout_cache`.
 8. Optionally add `daily_training_load` materialization.
 
+## Safe Rollout Added To Repo
+
+The repo now includes a safer migration path instead of mutating the live workout measurement in place.
+
+Added utilities:
+
+- `rebuild_workout_cache.py`
+- `audit_manual_values.py`
+
+Suggested rollout:
+
+1. Run a dry run:
+   - `python3 rebuild_workout_cache.py --url http://192.168.0.220:8086`
+2. Write rebuilt historical points into a new measurement:
+   - `python3 rebuild_workout_cache.py --url http://192.168.0.220:8086 --execute`
+3. Point the app at the rebuilt measurement:
+   - `WORKOUT_READ_MEASUREMENT=workout_cache_rebuilt`
+4. Verify dashboard behavior and query latency.
+5. Only after verification, decide whether to retire or delete the old `workout_cache`.
+
+Manual data audit:
+
+1. Run:
+   - `python3 audit_manual_values.py --url http://192.168.0.220:8086`
+2. Inspect malformed dates and tombstone-heavy keys before making any cleanup changes.
+
 ## Expected Outcome After Fixes
 
 If you do only the immediate read-path fixes:
