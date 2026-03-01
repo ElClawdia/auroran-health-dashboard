@@ -769,7 +769,7 @@
         
         <!-- PMC / Training Load -->
         <div class="grid">
-            <div class="card editable-card clickable" data-metric="ctl" style="border-color: var(--primary);">
+            <div class="card editable-card clickable" data-metric="ctl" id="ctl-card" style="border-color: var(--primary);">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -780,7 +780,7 @@
                 <input type="number" step="0.1" class="card-input" id="ctl-input" placeholder="CTL">
                 <div class="card-trend" style="color: var(--text-dim);">42-day avg</div>
             </div>
-            <div class="card editable-card clickable" data-metric="atl" style="border-color: var(--warning);">
+            <div class="card editable-card clickable" data-metric="atl" id="atl-card" style="border-color: var(--warning);">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -1439,14 +1439,32 @@
         }
         
         function updatePMC(data) {
+            const ctlCard = document.getElementById('ctl-card');
+            const atlCard = document.getElementById('atl-card');
+
+            function getLoadColor(v) {
+                const n = Number(v);
+                if (Number.isNaN(n)) return '#58a6ff'; // blue fallback
+                if (n > 70) return '#22c55e'; // green
+                if (n > 50) return '#58a6ff'; // blue
+                if (n > 30) return '#f59e0b'; // amber
+                return '#ef4444'; // red
+            }
+
             // CTL (Fitness) - 42 day average - only update if no manual value
             if (!shouldUseManual('ctl')) {
                 document.getElementById('ctl-value').textContent = data.ctl || '--';
+                if (ctlCard && data.ctl !== undefined && data.ctl !== null) {
+                    ctlCard.style.borderColor = getLoadColor(data.ctl);
+                }
             }
             
             // ATL (Strain) - 7 day average - only update if no manual value
             if (!shouldUseManual('atl')) {
                 document.getElementById('atl-value').textContent = data.atl || '--';
+                if (atlCard && data.atl !== undefined && data.atl !== null) {
+                    atlCard.style.borderColor = getLoadColor(data.atl);
+                }
             }
             
             // TSB (Form) = CTL - ATL
@@ -1465,8 +1483,8 @@
                         tsbCard.style.borderColor = '#f59e0b'; // Amber - losing fitness
                         tsbStatus.innerHTML = '<span style="color: #f59e0b;">' + data.status + '</span>';
                     } else if (tsb >= -10) {
-                        tsbCard.style.borderColor = '#3b82f6'; // Blue - maintaining fitness
-                        tsbStatus.innerHTML = '<span style="color: #3b82f6;">' + data.status + '</span>';
+                        tsbCard.style.borderColor = '#58a6ff'; // Blue - maintaining fitness
+                        tsbStatus.innerHTML = '<span style="color: #58a6ff;">' + data.status + '</span>';
                     } else if (tsb >= -30) {
                         tsbCard.style.borderColor = '#22c55e'; // Green - productive training
                         tsbStatus.innerHTML = '<span style="color: #22c55e;">' + data.status + '</span>';
