@@ -268,12 +268,35 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
 
 
 def _get_pmc_params_for_user(user: dict | None) -> dict:
+    """Return PMC parameters per selected style.
+
+    - strava: prioritize curve-shape match (canonical taus + lagged form display)
+    - suunto/native: keep existing house styles for now
+    """
     style = (user or {}).get("pmc_style", "native")
     if style == "suunto":
-        return {"ctl_days": 70, "atl_days": 10, "load_scale_factor": 1.5}
+        return {
+            "ctl_days": 70,
+            "atl_days": 10,
+            "load_scale_factor": 1.5,
+            "tsb_lag_days": 0,
+            "seed_mode": "zeros",
+        }
     if style == "strava":
-        return {"ctl_days": 40, "atl_days": 10, "load_scale_factor": 1.26}
-    return {"ctl_days": 55, "atl_days": 10, "load_scale_factor": 1.38}
+        return {
+            "ctl_days": 42,
+            "atl_days": 7,
+            "load_scale_factor": 1.0,
+            "tsb_lag_days": 1,
+            "seed_mode": "rolling_avg",
+        }
+    return {
+        "ctl_days": 55,
+        "atl_days": 10,
+        "load_scale_factor": 1.38,
+        "tsb_lag_days": 0,
+        "seed_mode": "zeros",
+    }
 
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 42
@@ -1755,6 +1778,8 @@ def _dash_fetch_pmc(days: int, end_date_str: str, user: dict | None = None) -> d
             ctl_days=params["ctl_days"],
             atl_days=params["atl_days"],
             load_scale_factor=params["load_scale_factor"],
+            tsb_lag_days=params.get("tsb_lag_days", 0),
+            seed_mode=params.get("seed_mode", "zeros"),
         )
         pmc_recent = pmc_series[-days:]
         latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
@@ -1762,6 +1787,7 @@ def _dash_fetch_pmc(days: int, end_date_str: str, user: dict | None = None) -> d
             "ctl": latest["ctl"], "atl": latest["atl"], "tsb": latest["tsb"],
             "status": get_status_description(latest["tsb"]),
             "description": get_status_description(latest["tsb"]),
+            "pmc_params": params,
             "days_tracked": len(full_series),
             "chart": {
                 "dates": [d["date"] for d in pmc_recent],
@@ -2232,11 +2258,14 @@ def pmc():
         # Return cached data but slice to requested days
         pmc_recent = cached["pmc_series"][-days:]
         latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
+        user = get_current_user()
+        params = _get_pmc_params_for_user(user)
         return jsonify({
             "ctl": latest["ctl"],
             "atl": latest["atl"],
             "tsb": latest["tsb"],
             "status": get_status_description(latest["tsb"]),
+            "pmc_params": params,
             "chart": {
                 "dates": [d["date"] for d in pmc_recent],
                 "ctl": [d["ctl"] for d in pmc_recent],
@@ -2278,6 +2307,8 @@ def pmc():
         ctl_days=params["ctl_days"],
         atl_days=params["atl_days"],
         load_scale_factor=params["load_scale_factor"],
+        tsb_lag_days=params.get("tsb_lag_days", 0),
+        seed_mode=params.get("seed_mode", "zeros"),
     )
     
     # Update cache only if querying for today
@@ -2295,6 +2326,7 @@ def pmc():
         "tsb": latest["tsb"],
         "status": status,
         "description": status,
+        "pmc_params": params,
         "days_tracked": len(full_series),
         "chart": {
             "dates": [d["date"] for d in pmc_recent],

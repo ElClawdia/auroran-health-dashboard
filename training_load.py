@@ -151,35 +151,64 @@ def calculate_pmc_series(
     ctl_days: int = CTL_DAYS,
     atl_days: int = ATL_DAYS,
     load_scale_factor: float = LOAD_SCALE_FACTOR,
+    tsb_lag_days: int = 0,
+    seed_mode: str = "zeros",
 ) -> List[Dict]:
     """
     Calculate CTL, ATL, TSB for each day using EWMA.
-    full_series: consecutive days with no gaps (missing days = load 0).
-    
-    Applies LOAD_SCALE_FACTOR to align with Strava's PMC values.
-    Uses ATL_DAYS=5 (not standard 7) to better match Strava's Fatigue calculation.
+
+    Args:
+      - full_series: consecutive days with no gaps (missing days = load 0)
+      - ctl_days / atl_days: time constants (tau)
+      - load_scale_factor: multiplier for daily load
+      - tsb_lag_days: if 1, report form as yesterday's (common platform display)
+      - seed_mode:
+          * "zeros" -> start CTL/ATL from 0
+          * "rolling_avg" -> initialize CTL/ATL from early-window average load
+
+    Notes:
+      - TSB is reported as displayed_tsb and mirrored to key "tsb" for compatibility.
+      - Raw same-day TSB is preserved as tsb_raw.
     """
     if not full_series:
         return []
-    
+
     k_ctl = 1 - math.exp(-1 / ctl_days)
     k_atl = 1 - math.exp(-1 / atl_days)
 
-    ctl = atl = 0.0
+    loads = [float(day.get("load", 0.0)) * load_scale_factor for day in full_series]
+
+    if seed_mode == "rolling_avg":
+        ctl_window = max(1, min(len(loads), int(ctl_days)))
+        atl_window = max(1, min(len(loads), int(atl_days)))
+        ctl = sum(loads[:ctl_window]) / ctl_window
+        atl = sum(loads[:atl_window]) / atl_window
+    else:
+        ctl = 0.0
+        atl = 0.0
 
     result = []
-    for day in full_series:
-        load = day.get("load", 0.0) * load_scale_factor
+    for idx, day in enumerate(full_series):
+        load = loads[idx]
         ctl = ctl * (1 - k_ctl) + load * k_ctl
         atl = atl * (1 - k_atl) + load * k_atl
-        tsb = ctl - atl
+        tsb_raw = ctl - atl
+
+        if tsb_lag_days > 0 and idx - tsb_lag_days >= 0:
+            tsb_display = result[idx - tsb_lag_days]["tsb_raw"]
+        else:
+            tsb_display = tsb_raw
+
         result.append({
             "date": day["date"],
             "load": round(load, 1),
             "ctl": round(ctl, 1),
             "atl": round(atl, 1),
-            "tsb": round(tsb, 1),
+            "tsb_raw": round(tsb_raw, 1),
+            "display_tsb": round(tsb_display, 1),
+            "tsb": round(tsb_display, 1),
         })
+
     return result
 
 
