@@ -1156,7 +1156,7 @@
                 updateRecommendation(quick.recommendation || {});
                 updateCalories(quick.calories || {});
                 updateWeight(quick.weight || {});
-                const weekPlan = (quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : [];
+                const weekPlan = (quick.recommendation || {}).weekly_plan || ((quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : []);
                 updateWeekPlan(weekPlan);
                 document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 

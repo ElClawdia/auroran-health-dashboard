@@ -107,30 +107,93 @@ class ExercisePlanner:
         
         return min(100, max(0, int(score)))
     
-    def get_recommendation(self, health_data: Dict) -> Dict:
+    def get_recommendation(self, health_data: Dict, allowed_sports: Optional[List[str]] = None,
+                           max_workout_days: int = 6) -> Dict:
         """
-        Generate personalized exercise recommendation for today
+        Generate personalized exercise recommendation for today.
+
+        Constraints:
+        - allowed_sports: list of selected sports
+        - max_workout_days: cap for training days/week (3-7)
         """
+        allowed = self._normalize_sports(allowed_sports)
+        max_days = max(3, min(7, int(max_workout_days or 6)))
+
         recovery = self.calculate_recovery_score(health_data)
-        
+
         # Determine recommendation based on recovery
         if recovery >= 85:
-            return self._high_intensity(recovery, health_data)
+            rec = self._high_intensity(recovery, health_data, allowed)
         elif recovery >= 70:
-            return self._moderate_intensity(recovery, health_data)
+            rec = self._moderate_intensity(recovery, health_data, allowed)
         elif recovery >= 50:
-            return self._easy_intensity(recovery, health_data)
+            rec = self._easy_intensity(recovery, health_data, allowed)
         else:
-            return self._rest_day(recovery, health_data)
+            rec = self._rest_day(recovery, health_data)
+
+        rec["allowed_sports"] = allowed
+        rec["max_workout_days"] = max_days
+        rec["weekly_plan"] = self.generate_weekly_plan(health_data, allowed_sports=allowed, max_workout_days=max_days)
+        return rec
     
-    def _high_intensity(self, recovery: int, data: Dict) -> Dict:
+    def _normalize_sports(self, allowed_sports: Optional[List[str]]) -> List[str]:
+        supported = ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"]
+        if not allowed_sports:
+            return supported
+        norm = []
+        for s in allowed_sports:
+            key = (s or "").strip().lower()
+            if key in supported and key not in norm:
+                norm.append(key)
+        return norm or supported
+
+    def _sport_pool(self, allowed_sports: List[str], level: str) -> List[str]:
+        # Templates by intensity level
+        templates = {
+            "HIGH": {
+                "run": ["Intervals", "Tempo Run", "Long Run"],
+                "cycling": ["Threshold Ride", "VO2 Ride", "Long Ride"],
+                "swim": ["Threshold Swim", "Speed Sets", "Endurance Swim"],
+                "gym": ["Heavy Strength", "Power Session"],
+                "xc_skiing": ["Intervals Ski", "Tempo Ski", "Long Ski"],
+                "kayaking": ["Intervals Paddle", "Tempo Paddle", "Long Paddle"],
+            },
+            "MODERATE": {
+                "run": ["Aerobic Run", "Steady Run"],
+                "cycling": ["Endurance Ride", "Steady Ride"],
+                "swim": ["Steady Swim", "Technique Swim"],
+                "gym": ["Strength", "Mobility + Core"],
+                "xc_skiing": ["Aerobic Ski", "Steady Ski"],
+                "kayaking": ["Endurance Paddle", "Steady Paddle"],
+            },
+            "EASY": {
+                "run": ["Easy Run", "Walk/Jog"],
+                "cycling": ["Recovery Ride"],
+                "swim": ["Easy Swim"],
+                "gym": ["Mobility", "Light Strength"],
+                "xc_skiing": ["Easy Ski"],
+                "kayaking": ["Easy Paddle"],
+            },
+        }
+        pool = []
+        for s in allowed_sports:
+            pool.extend(templates.get(level, {}).get(s, []))
+        return pool
+
+    def _suggest_workout_type(self, allowed_sports: Optional[List[str]] = None, level: str = "HIGH") -> str:
+        """Suggest workout type constrained by selected sports."""
+        allowed = self._normalize_sports(allowed_sports)
+        pool = self._sport_pool(allowed, level)
+        return pool[0] if pool else "Intervals"
+
+    def _high_intensity(self, recovery: int, data: Dict, allowed_sports: Optional[List[str]] = None) -> Dict:
         """High intensity workout recommendation"""
         return {
             "recovery": recovery,
             "recommendation": "HIGH",
             "message": "🔥 Prime day for hard efforts! Your HRV is excellent and recovery is complete.",
             "workout": {
-                "type": self._suggest_workout_type(),
+                "type": self._suggest_workout_type(allowed_sports, "HIGH"),
                 "duration": 45,
                 "zone": "3-4",
                 "intensity": "High",
@@ -138,8 +201,8 @@ class ExercisePlanner:
                 "pace": "5:00-5:30 /km" if data.get("hrv", 40) > 45 else "5:15-5:45 /km"
             },
             "alternatives": [
-                {"type": "Long Run", "duration": 60, "zone": "2-3", "description": "Steady state"},
-                {"type": "Hill Repeats", "duration": 40, "zone": "4", "description": "6x4min hills"}
+                {"type": self._suggest_workout_type(allowed_sports, "MODERATE"), "duration": 60, "zone": "2-3", "description": "Steady state"},
+                {"type": self._suggest_workout_type(allowed_sports, "HIGH"), "duration": 40, "zone": "4", "description": "Quality session"}
             ],
             "tips": [
                 "Great HRV - your nervous system is recovered",
@@ -148,14 +211,14 @@ class ExercisePlanner:
             ]
         }
     
-    def _moderate_intensity(self, recovery: int, data: Dict) -> Dict:
+    def _moderate_intensity(self, recovery: int, data: Dict, allowed_sports: Optional[List[str]] = None) -> Dict:
         """Moderate intensity recommendation"""
         return {
             "recovery": recovery,
             "recommendation": "MODERATE",
             "message": "✅ Good to train today, but don't go too hard. Build the base.",
             "workout": {
-                "type": "Aerobic Run",
+                "type": self._suggest_workout_type(allowed_sports, "MODERATE"),
                 "duration": 40,
                 "zone": "2",
                 "intensity": "Moderate",
@@ -163,8 +226,8 @@ class ExercisePlanner:
                 "pace": "5:45-6:15 /km"
             },
             "alternatives": [
-                {"type": "Cycling", "duration": 60, "zone": "2", "description": "Steady endurance"},
-                {"type": "Strength", "duration": 45, "zone": "N/A", "description": "Full body"}
+                {"type": self._suggest_workout_type(allowed_sports, "MODERATE"), "duration": 60, "zone": "2", "description": "Steady endurance"},
+                {"type": self._suggest_workout_type(allowed_sports, "EASY"), "duration": 45, "zone": "N/A", "description": "Low stress complementary session"}
             ],
             "tips": [
                 "Stay in Zone 2 for aerobic development",
@@ -173,14 +236,14 @@ class ExercisePlanner:
             ]
         }
     
-    def _easy_intensity(self, recovery: int, data: Dict) -> Dict:
+    def _easy_intensity(self, recovery: int, data: Dict, allowed_sports: Optional[List[str]] = None) -> Dict:
         """Easy/light recommendation"""
         return {
             "recovery": recovery,
             "recommendation": "EASY",
             "message": "🟡 Recovery needed. Keep it light today - easy movement only.",
             "workout": {
-                "type": "Easy Walk/Jog",
+                "type": self._suggest_workout_type(allowed_sports, "EASY"),
                 "duration": 20,
                 "zone": "1",
                 "intensity": "Light",
@@ -188,8 +251,8 @@ class ExercisePlanner:
                 "pace": "7:00+ /km or walking"
             },
             "alternatives": [
-                {"type": "Yoga", "duration": 30, "zone": "N/A", "description": "Mobility and stretching"},
-                {"type": "Swimming", "duration": 30, "zone": "1", "description": "Easy laps"}
+                {"type": self._suggest_workout_type(allowed_sports, "EASY"), "duration": 30, "zone": "N/A", "description": "Mobility and low-intensity work"},
+                {"type": self._suggest_workout_type(allowed_sports, "EASY"), "duration": 30, "zone": "1", "description": "Easy recovery session"}
             ],
             "tips": [
                 "Your body needs recovery",
@@ -217,10 +280,7 @@ class ExercisePlanner:
             ]
         }
     
-    def _suggest_workout_type(self) -> str:
-        """Suggest workout type based on weekly structure"""
-        # In a full implementation, check day of week and training plan
-        return "Intervals"
+    # legacy _suggest_workout_type removed; see constrained version above
     
     def calculate_training_load(self, workouts: List[Dict]) -> float:
         """
@@ -305,51 +365,69 @@ class ExercisePlanner:
         phases = ["Recovery", "Base", "Build", "Peak"]
         return phases[week_number % 4]
     
-    def generate_weekly_plan(self, health_data: Dict) -> List[Dict]:
-        """Generate a full weekly training plan"""
+    def generate_weekly_plan(self, health_data: Dict,
+                             allowed_sports: Optional[List[str]] = None,
+                             max_workout_days: int = 6) -> List[Dict]:
+        """Generate constrained weekly plan based on selected sports and max days."""
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        allowed = self._normalize_sports(allowed_sports)
+        max_days = max(3, min(7, int(max_workout_days or 6)))
+
         recovery = self.calculate_recovery_score(health_data)
-        phase = self.get_periodization_phase()
-        
-        if phase == "Recovery":
-            return [
-                {"day": "Mon", "type": "Rest", "intensity": 0},
-                {"day": "Tue", "type": "Easy Run", "duration": 30, "zone": "1-2"},
-                {"day": "Wed", "type": "Rest", "intensity": 0},
-                {"day": "Thu", "type": "Easy Run", "duration": 30, "zone": "1-2"},
-                {"day": "Fri", "type": "Rest", "intensity": 0},
-                {"day": "Sat", "type": "Walk", "duration": 45, "zone": "1"},
-                {"day": "Sun", "type": "Rest", "intensity": 0},
-            ]
-        elif phase == "Base":
-            return [
-                {"day": "Mon", "type": "Easy Run", "duration": 40, "zone": "2"},
-                {"day": "Tue", "type": "Strength", "duration": 45, "zone": "N/A"},
-                {"day": "Wed", "type": "Rest", "intensity": 0},
-                {"day": "Thu", "type": "Tempo Run", "duration": 35, "zone": "3"},
-                {"day": "Fri", "type": "Rest", "intensity": 0},
-                {"day": "Sat", "type": "Long Run", "duration": 60, "zone": "2"},
-                {"day": "Sun", "type": "Rest", "intensity": 0},
-            ]
-        elif phase == "Build":
-            return [
-                {"day": "Mon", "type": "Intervals", "duration": 40, "zone": "4"},
-                {"day": "Tue", "type": "Easy Run", "duration": 35, "zone": "2"},
-                {"day": "Wed", "type": "Strength", "duration": 45, "zone": "N/A"},
-                {"day": "Thu", "type": "Tempo", "duration": 40, "zone": "3"},
-                {"day": "Fri", "type": "Rest", "intensity": 0},
-                {"day": "Sat", "type": "Long Run", "duration": 75, "zone": "2-3"},
-                {"day": "Sun", "type": "Rest", "intensity": 0},
-            ]
-        else:  # Peak
-            return [
-                {"day": "Mon", "type": "Intervals", "duration": 45, "zone": "4-5"},
-                {"day": "Tue", "type": "Medium Run", "duration": 45, "zone": "2-3"},
-                {"day": "Wed", "type": "Rest", "intensity": 0},
-                {"day": "Thu", "type": "Race Pace", "duration": 50, "zone": "4"},
-                {"day": "Fri", "type": "Easy Run", "duration": 30, "zone": "1-2"},
-                {"day": "Sat", "type": "Race", "duration": 90, "zone": "3-4"},
-                {"day": "Sun", "type": "Rest", "intensity": 0},
-            ]
+        if recovery >= 85:
+            level = "HIGH"
+            durations = [45, 40, 45, 40, 35, 75, 30]
+        elif recovery >= 70:
+            level = "MODERATE"
+            durations = [40, 35, 40, 35, 30, 60, 25]
+        elif recovery >= 50:
+            level = "EASY"
+            durations = [30, 25, 30, 25, 20, 45, 20]
+        else:
+            level = "EASY"
+            durations = [20, 20, 20, 20, 20, 30, 20]
+
+        pool = self._sport_pool(allowed, level)
+        if not pool:
+            pool = ["Easy Run"]
+
+        # Build workout slots first; enforce max days and distribute rest days.
+        plan = []
+        workouts_used = 0
+        pool_idx = 0
+
+        # Keep one quality day pattern for run-only users on high/moderate weeks.
+        run_only = len(allowed) == 1 and allowed[0] == "run"
+        run_pattern = {
+            "HIGH": ["Intervals", "Steady Run", "Long Run", "Tempo Run", "Steady Run", "Easy Run"],
+            "MODERATE": ["Tempo Run", "Steady Run", "Long Run", "Steady Run", "Easy Run", "Easy Run"],
+            "EASY": ["Easy Run", "Easy Run", "Walk/Jog", "Easy Run", "Walk/Jog", "Easy Run"],
+        }
+
+        for i, day in enumerate(days):
+            remaining_days = len(days) - i
+            remaining_workouts = max_days - workouts_used
+            must_rest_now = remaining_workouts <= 0 or remaining_workouts < remaining_days - remaining_workouts
+
+            if must_rest_now:
+                plan.append({"day": day, "type": "Rest", "duration": 0})
+                continue
+
+            if run_only:
+                types = run_pattern.get(level, run_pattern["MODERATE"])
+                workout_type = types[min(workouts_used, len(types) - 1)]
+            else:
+                workout_type = pool[pool_idx % len(pool)]
+                pool_idx += 1
+
+            # Bias gym sessions to 1-2 days if gym is selected among multiple sports.
+            if "gym" in allowed and len(allowed) > 1 and workouts_used in (1, 4):
+                workout_type = "Strength"
+
+            plan.append({"day": day, "type": workout_type, "duration": durations[i]})
+            workouts_used += 1
+
+        return plan
 
 
 if __name__ == "__main__":

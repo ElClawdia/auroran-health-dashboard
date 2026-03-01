@@ -540,6 +540,16 @@ def account_page():
             updates['timezone'] = data['timezone']
         if data.get('pmc_style'):
             updates['pmc_style'] = data['pmc_style']
+
+        # Planner constraints
+        if isinstance(data.get('allowed_sports'), list):
+            supported = {"cycling", "run", "swim", "gym", "xc_skiing", "kayaking"}
+            updates['allowed_sports'] = [s for s in data['allowed_sports'] if s in supported]
+        if data.get('max_workout_days') is not None and str(data.get('max_workout_days')).strip() != "":
+            try:
+                updates['max_workout_days'] = max(3, min(7, int(data.get('max_workout_days'))))
+            except (TypeError, ValueError):
+                pass
         
         if updates:
             update_user(session['user'], updates)
@@ -663,7 +673,9 @@ def api_user():
             "initial_weight_kg": user.get("initial_weight_kg"),
             "timezone": user.get("timezone"),
             "profile_image": user.get("profile_image"),
-            "pmc_style": user.get("pmc_style", "native")
+            "pmc_style": user.get("pmc_style", "native"),
+            "allowed_sports": user.get("allowed_sports", ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"]),
+            "max_workout_days": user.get("max_workout_days", 6)
         })
     return jsonify({"error": "Not logged in"}), 401
 
@@ -1358,12 +1370,17 @@ def manual_values():
 @app.route('/api/recommendations/today')
 @login_required
 def recommendations_today():
-    """Get today's exercise recommendations"""
-    # Use mock data for demo
+    """Get today's exercise recommendations with user sport/day constraints."""
     health_data = get_mock_health_today()
-    
-    # Use planner to generate recommendation
-    rec = planner.get_recommendation(health_data)
+    user = get_current_user() or {}
+    allowed_sports = user.get("allowed_sports", ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"])
+    max_days = user.get("max_workout_days", 6)
+
+    rec = planner.get_recommendation(
+        health_data,
+        allowed_sports=allowed_sports,
+        max_workout_days=max_days,
+    )
     return jsonify(rec)
 
 
@@ -1767,12 +1784,15 @@ def _dash_fetch_health_history(days: int, end_date: str) -> dict:
         return {"dates": [], "hrv": [], "resting_hr": [], "sleep": [], "recovery": [], "steps": [], "weight": []}
 
 
-def _dash_fetch_recommendations(date: str) -> dict:
+def _dash_fetch_recommendations(date: str, user: dict | None = None) -> dict:
     """Fetch recommendations. Thread-safe."""
     try:
         health = get_mock_health_today()
         health["date"] = date
-        return planner.get_recommendation(health)
+        user = user or {}
+        allowed_sports = user.get("allowed_sports", ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"])
+        max_days = user.get("max_workout_days", 6)
+        return planner.get_recommendation(health, allowed_sports=allowed_sports, max_workout_days=max_days)
     except Exception as e:
         logger.error(f"Dashboard recommendations error: {e}")
         return {"error": str(e)}
@@ -2170,7 +2190,7 @@ def api_dashboard_quick():
     with ThreadPoolExecutor(max_workers=4) as ex:
         futures = {
             ex.submit(_dash_fetch_health_today, date): "health",
-            ex.submit(_dash_fetch_recommendations, date): "recommendation",
+            ex.submit(_dash_fetch_recommendations, date, user): "recommendation",
             ex.submit(_dash_fetch_calories, date, user): "calories",
             ex.submit(_dash_fetch_weight, date): "weight",
         }
@@ -2237,7 +2257,7 @@ def api_dashboard():
         futures = {
             ex.submit(_dash_fetch_health_today, date): "health",
             ex.submit(_dash_fetch_health_history, days, date): "history",
-            ex.submit(_dash_fetch_recommendations, date): "recommendation",
+            ex.submit(_dash_fetch_recommendations, date, user): "recommendation",
             ex.submit(_dash_fetch_pmc, days, date, user): "pmc",
             ex.submit(_dash_fetch_workouts, date, 10): "workouts",
             ex.submit(_dash_fetch_calories, date, user): "calories",

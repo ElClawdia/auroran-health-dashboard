@@ -242,6 +242,24 @@
                         </label>
                     </div>
                 </div>
+
+                <div class="form-group">
+                    <label>Allowed Sports (used by planner)</label>
+                    {% set selected_sports = user.allowed_sports or ['cycling','run','swim','gym','xc_skiing','kayaking'] %}
+                    <div style="display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 8px 16px;">
+                        <label><input type="checkbox" name="allowed_sports" value="cycling" {% if 'cycling' in selected_sports %}checked{% endif %}> 🚴 Cycling</label>
+                        <label><input type="checkbox" name="allowed_sports" value="run" {% if 'run' in selected_sports %}checked{% endif %}> 🏃 Run</label>
+                        <label><input type="checkbox" name="allowed_sports" value="swim" {% if 'swim' in selected_sports %}checked{% endif %}> 🏊 Swim</label>
+                        <label><input type="checkbox" name="allowed_sports" value="gym" {% if 'gym' in selected_sports %}checked{% endif %}> 🏋️ Gym</label>
+                        <label><input type="checkbox" name="allowed_sports" value="xc_skiing" {% if 'xc_skiing' in selected_sports %}checked{% endif %}> 🎿 XC skiing</label>
+                        <label><input type="checkbox" name="allowed_sports" value="kayaking" {% if 'kayaking' in selected_sports %}checked{% endif %}> 🚣 Kayaking</label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="max_workout_days">Max workout days per week (3-7)</label>
+                    <input type="number" id="max_workout_days" name="max_workout_days" min="3" max="7" step="1" value="{{ user.max_workout_days or 6 }}">
+                </div>
                 
                 <div class="form-actions">
                     <button type="submit" class="btn">Save Changes</button>
@@ -267,6 +285,7 @@
         document.getElementById('profile-form').addEventListener('submit', async function(e) {
             e.preventDefault();
             
+            const selectedSports = Array.from(document.querySelectorAll('input[name="allowed_sports"]:checked')).map(el => el.value);
             const data = {
                 full_name: document.getElementById('full_name').value,
                 email: document.getElementById('email').value,
@@ -274,7 +293,9 @@
                 height_cm: document.getElementById('height_cm').value,
                 initial_weight_kg: document.getElementById('initial_weight_kg').value,
                 timezone: document.getElementById('timezone').value,
-                pmc_style: document.querySelector('input[name="pmc_style"]:checked')?.value || 'native'
+                pmc_style: document.querySelector('input[name="pmc_style"]:checked')?.value || 'native',
+                allowed_sports: selectedSports,
+                max_workout_days: document.getElementById('max_workout_days').value
             };
             
             try {
