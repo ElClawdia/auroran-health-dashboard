@@ -301,7 +301,7 @@ def _get_pmc_params_for_user(user: dict | None) -> dict:
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 42
 HEALTH_LOOKBACK_DAYS = 42
-PMC_MIN_LOOKBACK_DAYS = 120
+PMC_MIN_LOOKBACK_DAYS = 365
 WEIGHT_LOOKBACK_DAYS = 42  # Never load more than 42 days at a time
 
 # Generate mock data for demo mode
@@ -1595,27 +1595,49 @@ def strava_sync():
 
 
 def _fetch_daily_loads_from_influx(query_days=120):
-    """Fetch daily training loads from InfluxDB (optimized, no pivot)"""
+    """Fetch daily training loads from InfluxDB.
+
+    Uses both `workouts` and `workout_cache` and de-duplicates by activity id/time,
+    then sums daily suffer_score (Strava Relative Effort).
+    """
     from collections import defaultdict
-    
+
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{query_days}d)
-      |> filter(fn: (r) => r._measurement == "workouts")
-      |> filter(fn: (r) => r._field == "suffer_score")
+      |> filter(fn: (r) => r._measurement == "workouts" or r._measurement == "workout_cache")
+      |> filter(fn: (r) => r._field == "suffer_score" or r._field == "strava_id" or r._field == "start_time")
     '''
-    
-    tables = query_api.query_stream(query)
-    by_date = defaultdict(float)
-    
-    for record in tables:
-        date = record.values.get('date', '')
-        load = record.get_value() or 0
-        if date:
-            by_date[date] += float(load)
-    
-    return [{"date": d, "load": l} for d, l in sorted(by_date.items())]
 
+    tables = query_api.query_stream(query)
+
+    # Build per-activity records first, then dedupe, then daily sum.
+    by_activity = defaultdict(dict)
+    for record in tables:
+        key = str(record.get_time())
+        field = record.get_field()
+        by_activity[key][field] = record.get_value()
+        by_activity[key]['date'] = record.values.get('date', '')
+
+    seen = set()
+    by_date = defaultdict(float)
+
+    for rec in by_activity.values():
+        date = rec.get('date', '')
+        if not date:
+            continue
+
+        strava_id = rec.get('strava_id')
+        start_time = rec.get('start_time')
+        dedupe_key = f"strava:{strava_id}" if strava_id else f"{date}|{start_time or ''}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        load = rec.get('suffer_score') or 0
+        by_date[date] += float(load)
+
+    return [{"date": d, "load": l} for d, l in sorted(by_date.items())]
 
 def _dash_fetch_health_today(target_date: str) -> dict:
     """Fetch health metrics for a date. Returns dict for dashboard. Thread-safe."""
