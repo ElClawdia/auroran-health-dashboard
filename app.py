@@ -286,7 +286,8 @@ def _get_pmc_params_for_user(user: dict | None) -> dict:
         return {
             "ctl_days": 42,
             "atl_days": 7,
-            "load_scale_factor": 1.0,
+            # Empirical calibration against current Strava anchor levels
+            "load_scale_factor": 1.27,
             "tsb_lag_days": 1,
             "seed_mode": "rolling_avg",
         }
