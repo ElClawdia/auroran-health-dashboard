@@ -22,9 +22,9 @@ from typing import Dict, List, Tuple, Optional
 
 # Default parameters (can be overridden by learned values)
 DEFAULT_PARAMS = {
-    "ctl_days": 42,
+    "ctl_days": 60,
     "atl_days": 7,
-    "load_scale_factor": 1.27,
+    "load_scale_factor": 1.4,
 }
 
 # File to store learned parameters

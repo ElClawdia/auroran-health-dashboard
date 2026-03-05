@@ -20,13 +20,13 @@ try:
     from formula_learning import load_params
     _params = load_params()
 except ImportError:
-    _params = {"ctl_days": 42, "atl_days": 7, "load_scale_factor": 1.27}
+    _params = {"ctl_days": 60, "atl_days": 7, "load_scale_factor": 1.4}
 
 # PMC constants - can be overridden by learned values
 # Empirically calibrated against multiple reference points from Strava:
 #   12/02: CTL=30, ATL=40 | 01/01: CTL=27, ATL=25 | 01/29: CTL=50, ATL=85
 #   02/18: CTL=46, ATL=40 | Current: CTL=47, ATL=43
-CTL_DAYS = _params.get("ctl_days", 42)  # Chronic Training Load period (τ)
+CTL_DAYS = _params.get("ctl_days", 60)  # Chronic Training Load period (τ)
 ATL_DAYS = _params.get("atl_days", 7)   # Acute Training Load period (τ)
 # EWMA decay: k = 1 - exp(-1/τ)
 CTL_K = 1 - math.exp(-1 / CTL_DAYS)   # ≈ 0.0235
@@ -34,7 +34,7 @@ ATL_K = 1 - math.exp(-1 / ATL_DAYS)   # ≈ 0.133
 
 # Load scaling factor to align with Strava's PMC display
 # Strava's "Relative Effort" (suffer_score) needs ~1.27x scaling for PMC
-LOAD_SCALE_FACTOR = _params.get("load_scale_factor", 1.27)
+LOAD_SCALE_FACTOR = _params.get("load_scale_factor", 1.4)
 
 
 def reload_params():
@@ -150,35 +150,65 @@ def calculate_pmc_series(
     full_series: List[Dict],
     ctl_days: int = CTL_DAYS,
     atl_days: int = ATL_DAYS,
+    load_scale_factor: float = LOAD_SCALE_FACTOR,
+    tsb_lag_days: int = 0,
+    seed_mode: str = "zeros",
 ) -> List[Dict]:
     """
     Calculate CTL, ATL, TSB for each day using EWMA.
-    full_series: consecutive days with no gaps (missing days = load 0).
-    
-    Applies LOAD_SCALE_FACTOR to align with Strava's PMC values.
-    Uses ATL_DAYS=5 (not standard 7) to better match Strava's Fatigue calculation.
+
+    Args:
+      - full_series: consecutive days with no gaps (missing days = load 0)
+      - ctl_days / atl_days: time constants (tau)
+      - load_scale_factor: multiplier for daily load
+      - tsb_lag_days: if 1, report form as yesterday's (common platform display)
+      - seed_mode:
+          * "zeros" -> start CTL/ATL from 0
+          * "rolling_avg" -> initialize CTL/ATL from early-window average load
+
+    Notes:
+      - TSB is reported as displayed_tsb and mirrored to key "tsb" for compatibility.
+      - Raw same-day TSB is preserved as tsb_raw.
     """
     if not full_series:
         return []
-    
+
     k_ctl = 1 - math.exp(-1 / ctl_days)
     k_atl = 1 - math.exp(-1 / atl_days)
 
-    ctl = atl = 0.0
+    loads = [float(day.get("load", 0.0)) * load_scale_factor for day in full_series]
+
+    if seed_mode == "rolling_avg":
+        ctl_window = max(1, min(len(loads), int(ctl_days)))
+        atl_window = max(1, min(len(loads), int(atl_days)))
+        ctl = sum(loads[:ctl_window]) / ctl_window
+        atl = sum(loads[:atl_window]) / atl_window
+    else:
+        ctl = 0.0
+        atl = 0.0
 
     result = []
-    for day in full_series:
-        load = day.get("load", 0.0) * LOAD_SCALE_FACTOR
+    for idx, day in enumerate(full_series):
+        load = loads[idx]
         ctl = ctl * (1 - k_ctl) + load * k_ctl
         atl = atl * (1 - k_atl) + load * k_atl
-        tsb = ctl - atl
+        tsb_raw = ctl - atl
+
+        if tsb_lag_days > 0 and idx - tsb_lag_days >= 0:
+            tsb_display = result[idx - tsb_lag_days]["tsb_raw"]
+        else:
+            tsb_display = tsb_raw
+
         result.append({
             "date": day["date"],
             "load": round(load, 1),
             "ctl": round(ctl, 1),
             "atl": round(atl, 1),
-            "tsb": round(tsb, 1),
+            "tsb_raw": round(tsb_raw, 1),
+            "display_tsb": round(tsb_display, 1),
+            "tsb": round(tsb_display, 1),
         })
+
     return result
 
 
@@ -203,15 +233,15 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
     latest = pmc_series[-1]
     tsb = latest["tsb"]
     
-    # Determine status
+    # Determine status (Suunto Form zones)
     if tsb > 10:
-        status = "Fresh 🏃"
-    elif tsb > -10:
-        status = "Balanced ⚖️"
-    elif tsb > -30:
-        status = "Fatigued 😴"
+        status = "Losing Fitness"
+    elif tsb >= -10:
+        status = "Maintaining Fitness"
+    elif tsb >= -30:
+        status = "Productive Training"
     else:
-        status = "Overreaching ⚠️"
+        status = "Going Too Hard"
     
     return {
         "ctl": latest["ctl"],
@@ -223,29 +253,23 @@ def calculate_ctl_atl_tsb(daily_loads: List[Dict]) -> Dict:
 
 def get_status_description(tsb: float) -> str:
     """Get human-readable description of TSB"""
-    if tsb > 20:
-        return "Peak form - Great for races! 🏆"
-    elif tsb > 10:
-        return "Fresh - Ready for high intensity 🏃"
-    elif tsb > 0:
-        return "Prepared - Good for training 💪"
-    elif tsb > -10:
-        return "Moderately tired - Easy training recommended ⚖️"
-    elif tsb > -25:
-        return "Fatigued - Rest or very easy sessions 😴"
-    else:
-        return "Overreaching - Take a rest day! ⚠️"
+    if tsb > 10:
+        return "Losing Fitness - short-term freshness before races"
+    if tsb >= -10:
+        return "Maintaining Fitness - load roughly in balance"
+    if tsb >= -30:
+        return "Productive Training - adding load in a manageable way"
+    return "Going Too Hard - risk of illness/injury, take a step back"
 
 
 # Zone descriptions
 def get_pmc_zones() -> Dict:
     """Get PMC zone descriptions"""
     return {
-        "peak": {"tsb_min": 20, "color": "#22c55e", "desc": "Peak Form"},
-        "fresh": {"tsb_min": 10, "color": "#84cc16", "desc": "Fresh"},
-        "optimal": {"tsb_min": 0, "color": "#eab308", "desc": "Optimal"},
-        "training": {"tsb_min": -10, "color": "#f97316", "desc": "Training"},
-        "overreaching": {"tsb_min": float("-inf"), "color": "#ef4444", "desc": "Overreaching"}
+        "losing_fitness": {"tsb_min": 10, "color": "#f59e0b", "desc": "Losing Fitness"},
+        "maintaining": {"tsb_min": -10, "color": "#3b82f6", "desc": "Maintaining Fitness"},
+        "productive": {"tsb_min": -30, "color": "#22c55e", "desc": "Productive Training"},
+        "going_too_hard": {"tsb_min": float("-inf"), "color": "#ef4444", "desc": "Going Too Hard"}
     }
 
 

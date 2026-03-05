@@ -4,20 +4,10 @@
 
 # Secrets (API keys)
 secrets.yaml
-secrets.json
 passwords.txt
-renew-strava-tokens/strava_tokens.json
-strava/strava_tokens.json
-sirius_influxdb_secre_token.json
-local_influxdb_secret_token.json
 
-# SMTP configuration (contains password)
-smtp_config.json
-
-# User data (contains password hashes)
-users.json
-password_reset_tokens.json
-learned_params.json
+# Never commit JSON artifacts or secrets
+*.json
 
 # Flask session secret key
 .flask_secret_key
@@ -38,8 +28,8 @@ __pycache__/
 .DS_Store
 
 # Logs
-logs/health-dashboard.log'
-logs/strava_sync.log'
+logs/
+logs/**
 *.log
 
 #Data

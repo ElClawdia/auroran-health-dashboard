@@ -115,7 +115,19 @@ def write_to_influxdb(calorie_data: dict[str, dict[str, float]]) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Import Apple Health calories to InfluxDB.")
+    parser = argparse.ArgumentParser(
+        description="Import Apple Health calories (basal + active) to InfluxDB daily_health.",
+        epilog="""
+Examples:
+  python3 import_apple_calories.py --days 2
+      Import calories for last 2 days.
+  python3 import_apple_calories.py --days 7
+      Import calories for last week.
+  python3 import_apple_calories.py --dates 2026-02-20 2026-02-21
+      Import specific dates.
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--xml",
         default="apple_health_export/export.xml",

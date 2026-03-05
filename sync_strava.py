@@ -6,6 +6,7 @@ Run periodically via cron: */10 * * * *
 
 import os
 import sys
+import json
 from pathlib import Path
 
 # Suppress config INFO/DEBUG logs for CLI runs
@@ -20,7 +21,7 @@ from config import (
     INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET,
     STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN,
 )
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 
 # Get fresh Strava token (auto-refreshes if needed)
 try:
@@ -37,6 +38,19 @@ except Exception as e:
 from strava_client import StravaClient
 from influxdb_client import InfluxDBClient, Point
 from training_load import calculate_training_load
+
+
+def build_activity_timestamp(activity_date: str, activity_time: str) -> datetime:
+    """Return a stable UTC timestamp for a workout event."""
+    if activity_date and activity_time:
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(f"{activity_date} {activity_time}", fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+    if activity_date:
+        return datetime.strptime(activity_date, "%Y-%m-%d").replace(hour=12, tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
 import argparse
 
 
@@ -132,6 +146,7 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                 strava_id = str(activity.get("id", ""))
                 date = activity.get("date", "")
                 time = activity.get("time", "")
+                activity_ts = build_activity_timestamp(date, time)
                 # Use Strava ID as part of measurement for idempotent writes
                 # Ensure all numeric fields are float to avoid type conflicts, handle None
                 def to_float(val, default=0.0):
@@ -167,7 +182,8 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                     .field("max_hr", to_float(activity.get("max_hr")))\
                     .field("suffer_score", to_float(ss))\
                     .field("calories", to_float(activity.get("calories")))\
-                    .field("name", activity.get("name", ""))
+                    .field("name", activity.get("name", ""))\
+                    .time(activity_ts)
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
                 
@@ -184,7 +200,8 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                     .field("max_hr", to_float(activity.get("max_hr")))\
                     .field("calories", to_float(activity.get("calories")))\
                     .field("suffer_score", to_float(ss))\
-                    .field("name", activity.get("name", ""))
+                    .field("name", activity.get("name", ""))\
+                    .time(activity_ts)
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=cache_point)
                 existing_ids.add(strava_id)  # Add to avoid duplicates in same run
@@ -193,6 +210,37 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                 print(f"Error syncing activity {activity.get('id')}: {e}")
         
         print(f"Synced {synced} new, skipped {skipped} existing")
+
+        # Write recent workouts cache to disk using Influx data (not just latest API results)
+        try:
+            cutoff = (datetime.now() - timedelta(days=42)).strftime("%Y-%m-%d")
+            recent_workouts = {}
+            cache_query = f'''
+            from(bucket: \"{INFLUXDB_BUCKET}\")
+              |> range(start: -42d)
+              |> filter(fn: (r) => r._measurement == \"workout_cache\")
+              |> filter(fn: (r) => r.date >= \"{cutoff}\")
+            '''
+            for record in query_api.query_stream(cache_query):
+                key = str(record.get_time())
+                entry = recent_workouts.setdefault(
+                    key,
+                    {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
+                )
+                entry[record.get_field()] = record.get_value()
+
+            if recent_workouts:
+                recent = list(recent_workouts.values())
+                recent = sorted(recent, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+                payload = {
+                    "loaded_at": datetime.now().isoformat(),
+                    "data": recent[:200],
+                }
+                cache_file = Path(__file__).parent / "logs" / "recent_workouts_cache.json"
+                cache_file.write_text(json.dumps(payload))
+                print(f"Wrote recent workouts cache: {cache_file}")
+        except Exception as e:
+            print(f"Warning: failed to write recent workouts cache: {e}")
         
     finally:
         # Proper cleanup to ensure all writes are flushed

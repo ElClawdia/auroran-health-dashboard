@@ -25,6 +25,9 @@ DEFAULT_USERS = {
         "initial_weight_kg": None,
         "timezone": "Europe/Helsinki",
         "profile_image": None,
+        "pmc_style": "native",
+        "allowed_sports": ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"],
+        "max_workout_days": 6,
         "password_hash": None,  # Will be set on first load
         "password_raw": "cTfp!&!yt%jHU8&2@f"  # Only used for initial hash
     }
@@ -49,7 +52,20 @@ def load_users() -> dict:
     """Load users from JSON file, creating default if needed"""
     if USERS_FILE.exists():
         with open(USERS_FILE) as f:
-            return json.load(f)
+            users = json.load(f)
+
+        # Backfill newly introduced profile fields
+        changed = False
+        for username, user in users.items():
+            if "allowed_sports" not in user:
+                user["allowed_sports"] = ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"]
+                changed = True
+            if "max_workout_days" not in user:
+                user["max_workout_days"] = 6
+                changed = True
+        if changed:
+            save_users(users)
+        return users
     
     # Create default users with hashed passwords
     users = {}
@@ -64,6 +80,9 @@ def load_users() -> dict:
             "initial_weight_kg": data.get("initial_weight_kg"),
             "timezone": data.get("timezone"),
             "profile_image": data.get("profile_image"),
+            "pmc_style": data.get("pmc_style", "native"),
+            "allowed_sports": data.get("allowed_sports", ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"]),
+            "max_workout_days": data.get("max_workout_days", 6),
             "password_hash": password_hash,
             "salt": salt
         }
@@ -110,7 +129,7 @@ def update_user(username: str, updates: dict) -> bool:
     
     # Update other fields
     for key, value in updates.items():
-        if key in ["full_name", "email", "dob", "height_cm", "initial_weight_kg", "timezone", "profile_image"]:
+        if key in ["full_name", "email", "dob", "height_cm", "initial_weight_kg", "timezone", "profile_image", "pmc_style", "allowed_sports", "max_workout_days"]:
             users[username][key] = value
     
     save_users(users)

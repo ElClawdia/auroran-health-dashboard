@@ -268,7 +268,9 @@ See `smtp_config.json.example` for template.
 1. **Start InfluxDB:** `http://influxdb:8086` (org: `auroran`, bucket: `health`)
 2. **Configure tokens:** `renew-strava-tokens/strava_tokens.json`
 3. **Run dashboard:** `python3 app.py`
-4. **Sync Strava:** `python3 sync_strava.py`
+4. **Sync data:** See [USER_GUIDE.md](USER_GUIDE.md) for all sync commands
+
+For detailed user instructions (Apple Health, Strava, Suunto imports, flags), see **[USER_GUIDE.md](USER_GUIDE.md)**.
 
 ### Cron (Optional)
 ```bash
@@ -314,10 +316,11 @@ python3 sync_strava.py --newer-than 20240101  # Since specific date
 Export your Apple Health data from iPhone and sync to InfluxDB:
 
 1. **Export:** Use "Export Health Data" on iPhone (Health app → Profile → Export All Health Data)
-2. **Convert:** Use `apple_health_sync.py` to parse the XML export
-3. **Sync:** Data flows to InfluxDB → Dashboard
+2. **Place:** Copy `export.xml` into `apple_health_export/`
+3. **Sync health:** `python3 apple_health_sync.py` (full) or `python3 apple_health_sync.py --days 2` (quick update)
+4. **Sync calories:** `python3 import_apple_calories.py --days 2`
 
-The dashboard filters to only show recent data (last 90 days) with actual HRV values for performance.
+See [USER_GUIDE.md](USER_GUIDE.md) for all flags.
 
 ### Suunto API Integration (Planned)
 

@@ -769,7 +769,7 @@
         
         <!-- PMC / Training Load -->
         <div class="grid">
-            <div class="card editable-card clickable" data-metric="ctl" style="border-color: var(--primary);">
+            <div class="card editable-card clickable" data-metric="ctl" id="ctl-card" style="border-color: var(--primary);">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -780,7 +780,7 @@
                 <input type="number" step="0.1" class="card-input" id="ctl-input" placeholder="CTL">
                 <div class="card-trend" style="color: var(--text-dim);">42-day avg</div>
             </div>
-            <div class="card editable-card clickable" data-metric="atl" style="border-color: var(--warning);">
+            <div class="card editable-card clickable" data-metric="atl" id="atl-card" style="border-color: var(--warning);">
                 <div class="card-actions">
                     <button class="card-action-btn edit-btn" title="Edit value">✎</button>
                 </div>
@@ -974,6 +974,7 @@
             if (newDate > today) return;
             
             currentViewDate = newDate;
+            workoutsRetryCount = 0;
             updateDateNavigation();
             
             // Clear manual values for new date and reload
@@ -1096,6 +1097,7 @@
         }
         
         let fetchAbortController = null;
+        let workoutsRetryCount = 0;
         const FETCH_TIMEOUT_MS = 20000;  // 20s per phase
         async function fetchJson(url, signal) {
             const res = await fetch(url, { signal });
@@ -1114,23 +1116,28 @@
             // Phase 3 only - retries allowed
             const workoutsRes = await fetch('/api/workouts?before_date=' + date + '&limit=10', { signal });
             if (date !== currentViewDate) return;
-            if (workoutsRes.status === 503) {
-                const retryAfter = parseInt(workoutsRes.headers.get('Retry-After') || '3', 10);
-                setTimeout(() => {
-                    if (date === currentViewDate && fetchAbortController) {
-                        fetchWorkoutsOnly(date, fetchAbortController.signal);
-                    }
-                }, retryAfter * 1000);
-                return;
-            }
             if (!workoutsRes.ok) return;
+            const isStale = workoutsRes.headers.get('X-Workouts-Stale') === 'true';
             let workouts = [];
             try {
                 const raw = await workoutsRes.json();
                 workouts = Array.isArray(raw) ? raw : [];
             } catch (_) { }
-            updateWorkouts(workouts);
+            updateWorkouts(workouts, isStale && workouts.length === 0);
             document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+            if (workouts.length > 0) {
+                workoutsRetryCount = 0;
+                return;
+            }
+            if (isStale && workoutsRetryCount < 10) {
+                const delay = Math.min(10000, 2000 * (workoutsRetryCount + 1));
+                workoutsRetryCount += 1;
+                setTimeout(() => {
+                    if (date === currentViewDate && fetchAbortController) {
+                        fetchWorkoutsOnly(date, fetchAbortController.signal);
+                    }
+                }, delay);
+            }
         }
 
         async function fetchData() {
@@ -1149,7 +1156,7 @@
                 updateRecommendation(quick.recommendation || {});
                 updateCalories(quick.calories || {});
                 updateWeight(quick.weight || {});
-                const weekPlan = (quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : [];
+                const weekPlan = (quick.recommendation || {}).weekly_plan || ((quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : []);
                 updateWeekPlan(weekPlan);
                 document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 
@@ -1432,14 +1439,40 @@
         }
         
         function updatePMC(data) {
-            // CTL (Fitness) - 42 day average - only update if no manual value
+            const ctlCard = document.getElementById('ctl-card');
+            const atlCard = document.getElementById('atl-card');
+
+            function getLoadColor(v) {
+                const n = Number(v);
+                if (Number.isNaN(n)) return '#58a6ff'; // blue fallback
+                if (n > 70) return '#22c55e'; // green
+                if (n > 50) return '#58a6ff'; // blue
+                if (n > 30) return '#f59e0b'; // amber
+                return '#ef4444'; // red
+            }
+
+            // CTL (Fitness) - 42 day average
             if (!shouldUseManual('ctl')) {
                 document.getElementById('ctl-value').textContent = data.ctl || '--';
             }
+            // Always color by currently shown CTL value (auto or manual)
+            if (ctlCard) {
+                const shownCtl = parseFloat(document.getElementById('ctl-value').textContent);
+                if (!Number.isNaN(shownCtl)) {
+                    ctlCard.style.borderColor = getLoadColor(shownCtl);
+                }
+            }
             
-            // ATL (Strain) - 7 day average - only update if no manual value
+            // ATL (Strain) - 7 day average
             if (!shouldUseManual('atl')) {
                 document.getElementById('atl-value').textContent = data.atl || '--';
+            }
+            // Always color by currently shown ATL value (auto or manual)
+            if (atlCard) {
+                const shownAtl = parseFloat(document.getElementById('atl-value').textContent);
+                if (!Number.isNaN(shownAtl)) {
+                    atlCard.style.borderColor = getLoadColor(shownAtl);
+                }
             }
             
             // TSB (Form) = CTL - ATL
@@ -1453,16 +1486,19 @@
                     const tsb = data.tsb;
                     tsbValue.textContent = tsb > 0 ? '+' + tsb : tsb;
                     
-                    // Color code based on TSB
+                    // Color code based on TSB (Suunto zones)
                     if (tsb > 10) {
-                        tsbCard.style.borderColor = '#3fb950'; // Green - fresh
-                        tsbStatus.innerHTML = '<span style="color: #3fb950;">' + data.status + '</span>';
-                    } else if (tsb > -10) {
-                        tsbCard.style.borderColor = '#d29922'; // Yellow - balanced
-                        tsbStatus.innerHTML = '<span style="color: #d29922;">' + data.status + '</span>';
+                        tsbCard.style.borderColor = '#f59e0b'; // Amber - losing fitness
+                        tsbStatus.innerHTML = '<span style="color: #f59e0b;">' + data.status + '</span>';
+                    } else if (tsb >= -10) {
+                        tsbCard.style.borderColor = '#58a6ff'; // Blue - maintaining fitness
+                        tsbStatus.innerHTML = '<span style="color: #58a6ff;">' + data.status + '</span>';
+                    } else if (tsb >= -30) {
+                        tsbCard.style.borderColor = '#22c55e'; // Green - productive training
+                        tsbStatus.innerHTML = '<span style="color: #22c55e;">' + data.status + '</span>';
                     } else {
-                        tsbCard.style.borderColor = '#f85149'; // Red - fatigued
-                        tsbStatus.innerHTML = '<span style="color: #f85149;">' + data.status + '</span>';
+                        tsbCard.style.borderColor = '#ef4444'; // Red - going too hard
+                        tsbStatus.innerHTML = '<span style="color: #ef4444;">' + data.status + '</span>';
                     }
                 } else {
                     tsbValue.textContent = '--';
@@ -1651,7 +1687,7 @@
             return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         }
 
-        function updateWorkouts(workouts) {
+        function updateWorkouts(workouts, isLoading = false) {
             const container = document.getElementById('workouts-list');
             const titleEl = document.getElementById('workouts-chart-title');
             if (titleEl) {
@@ -1659,7 +1695,9 @@
             }
             
             if (!workouts || workouts.length === 0) {
-                container.innerHTML = '<div class="loading">No workouts yet. Add your first workout!</div>';
+                container.innerHTML = isLoading
+                    ? '<div class="loading">Loading workouts...</div>'
+                    : '<div class="loading">No workouts yet. Add your first workout!</div>';
                 return;
             }
             
