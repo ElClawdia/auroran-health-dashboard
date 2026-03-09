@@ -214,15 +214,16 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
         # Write recent workouts cache to disk using Influx data (not just latest API results)
         try:
             cutoff = (datetime.now() - timedelta(days=42)).strftime("%Y-%m-%d")
+            measurements = ["workout_cache", "workouts"]
             recent_workouts = {}
             cache_query = f'''
             from(bucket: \"{INFLUXDB_BUCKET}\")
               |> range(start: -42d)
-              |> filter(fn: (r) => r._measurement == \"workout_cache\")
+              |> filter(fn: (r) => r._measurement == \"workout_cache\" or r._measurement == \"workouts\")
               |> filter(fn: (r) => r.date >= \"{cutoff}\")
             '''
             for record in query_api.query_stream(cache_query):
-                key = str(record.get_time())
+                key = f'{record.values.get("_measurement", "")}|{record.get_time()}'
                 entry = recent_workouts.setdefault(
                     key,
                     {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
@@ -232,9 +233,26 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
             if recent_workouts:
                 recent = list(recent_workouts.values())
                 recent = sorted(recent, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+                deduped = []
+                seen = set()
+                for workout in recent:
+                    strava_id = workout.get("strava_id")
+                    dedupe_key = f"strava:{strava_id}" if strava_id else "|".join(
+                        [
+                            str(workout.get("date", "")),
+                            str(workout.get("start_time", "")),
+                            str(workout.get("name", "")),
+                            str(workout.get("type", "")),
+                        ]
+                    )
+                    if dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+                    deduped.append(workout)
                 payload = {
                     "loaded_at": datetime.now().isoformat(),
-                    "data": recent[:200],
+                    "measurements": measurements,
+                    "data": deduped[:200],
                 }
                 cache_file = Path(__file__).parent / "logs" / "recent_workouts_cache.json"
                 cache_file.write_text(json.dumps(payload))

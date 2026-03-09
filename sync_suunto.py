@@ -448,7 +448,24 @@ def write_to_influx(
                 .field("calories", int(w.get("calories", 0)))
                 .time(time_dt)
             )
-            write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+            cache_point = (
+                Point("workout_cache")
+                .tag("type", str(w.get("type", "Workout")))
+                .tag("date", w["date"])
+                .tag("source", SOURCE_TAG)
+                .field("strava_id", str(w.get("source_id", "")))
+                .field("name", str(w.get("name", "Suunto Export")))
+                .field("start_time", str(w.get("start_time", "")))
+                .field("duration", float(w.get("duration", 0.0)))
+                .field("distance", float(w.get("distance", 0.0)))
+                .field("elevation_gain", float(w.get("elevation_gain", 0.0)))
+                .field("avg_hr", float(w.get("avg_hr", 0.0)))
+                .field("max_hr", float(w.get("max_hr", 0.0)))
+                .field("suffer_score", float(w.get("suffer_score", 0.0)))
+                .field("calories", int(w.get("calories", 0)))
+                .time(time_dt)
+            )
+            write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=[point, cache_point])
             workouts_written += 1
 
         for d in daily:

@@ -1125,11 +1125,11 @@
             } catch (_) { }
             updateWorkouts(workouts, isStale && workouts.length === 0);
             document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-            if (workouts.length > 0) {
+            if (!isStale) {
                 workoutsRetryCount = 0;
                 return;
             }
-            if (isStale && workoutsRetryCount < 10) {
+            if (workoutsRetryCount < 6) {
                 const delay = Math.min(10000, 2000 * (workoutsRetryCount + 1));
                 workoutsRetryCount += 1;
                 setTimeout(() => {
@@ -2134,6 +2134,8 @@
             const config = metricConfig[metric];
             if (metric === 'steps') {
                 return Math.round(value).toLocaleString();
+            } else if (metric === 'calories') {
+                return Math.round(value).toLocaleString() + (config.unit ? ' ' + config.unit : '');
             } else if (metric === 'tsb') {
                 return (value >= 0 ? '+' : '') + value.toFixed(1);
             } else if (['ctl', 'atl', 'hrv', 'resting_hr'].includes(metric)) {
