@@ -2090,7 +2090,7 @@ def _get_weight_for_date(date: str) -> dict:
             for rec in table.records:
                 v = rec.get_value()
                 if v is not None:
-                    resp = {"weight": float(v), "source": "manual", "date": date}
+                    resp = {"weight": float(v), "source": "manual", "date": date, "source_date": date}
                     _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
                     return resp
 
@@ -2107,7 +2107,7 @@ def _get_weight_for_date(date: str) -> dict:
             for rec in table.records:
                 v = rec.get_value()
                 if v is not None:
-                    resp = {"weight": float(v), "source": "auto", "date": date}
+                    resp = {"weight": float(v), "source": "auto", "date": date, "source_date": date}
                     _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
                     return resp
 
@@ -2126,7 +2126,12 @@ def _get_weight_for_date(date: str) -> dict:
             for rec in table.records:
                 v = rec.get_value()
                 if v is not None:
-                    resp = {"weight": float(v), "source": "auto", "date": rec.values.get("date", date)}
+                    resp = {
+                        "weight": float(v),
+                        "source": "auto",
+                        "date": date,
+                        "source_date": rec.values.get("date", date),
+                    }
                     _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
                     return resp
 
@@ -2146,16 +2151,21 @@ def _get_weight_for_date(date: str) -> dict:
             for rec in table.records:
                 v = rec.get_value()
                 if v is not None:
-                    resp = {"weight": float(v), "source": "manual", "date": rec.values.get("date", date)}
+                    resp = {
+                        "weight": float(v),
+                        "source": "manual",
+                        "date": date,
+                        "source_date": rec.values.get("date", date),
+                    }
                     _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
                     return resp
 
-        resp = {"weight": None, "date": date}
+        resp = {"weight": None, "date": date, "source_date": None}
         _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
         return resp
     except Exception as e:
         logger.error(f"Weight fetch error: {e}")
-        return {"weight": None, "date": date}
+        return {"weight": None, "date": date, "source_date": None}
 
 
 def _dash_fetch_weight(date: str) -> dict:

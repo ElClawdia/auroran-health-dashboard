@@ -982,7 +982,8 @@
             Object.keys(manualValues).forEach(k => delete manualValues[k]);
             document.querySelectorAll('.manual-value').forEach(el => el.classList.remove('manual-value'));
             
-            loadManualValues();
+            resetDateSensitiveViews(currentViewDate);
+            loadManualValues(currentViewDate);
             fetchData();
         }
         
@@ -1011,12 +1012,52 @@
                     Object.keys(useManual).forEach(k => useManual[k] = false);
                     Object.keys(manualValues).forEach(k => delete manualValues[k]);
                     document.querySelectorAll('.manual-value').forEach(el => el.classList.remove('manual-value'));
-                    loadManualValues();
+                    resetDateSensitiveViews(currentViewDate);
+                    loadManualValues(currentViewDate);
                     fetchData();
                 }
             });
             
             updateDateNavigation();
+        }
+
+        function resetDateSensitiveViews(viewDate) {
+            const caloriesTrend = document.getElementById('calories-trend');
+            if (caloriesTrend) {
+                caloriesTrend.textContent = viewDate;
+            }
+
+            if (!shouldUseManual('calories')) {
+                const caloriesValue = document.getElementById('calories-value');
+                if (caloriesValue) caloriesValue.textContent = '--';
+            }
+            if (!shouldUseManual('weight')) {
+                const weightValue = document.getElementById('weight-value');
+                if (weightValue) weightValue.textContent = '--';
+            }
+            if (!shouldUseManual('ctl')) {
+                const ctlValue = document.getElementById('ctl-value');
+                if (ctlValue) ctlValue.textContent = '--';
+            }
+            if (!shouldUseManual('atl')) {
+                const atlValue = document.getElementById('atl-value');
+                if (atlValue) atlValue.textContent = '--';
+            }
+            if (!shouldUseManual('tsb')) {
+                const tsbValue = document.getElementById('tsb-value');
+                const tsbStatus = document.getElementById('tsb-status');
+                if (tsbValue) tsbValue.textContent = '--';
+                if (tsbStatus) tsbStatus.textContent = 'Loading...';
+            }
+
+            const titleEl = document.getElementById('workouts-chart-title');
+            if (titleEl) {
+                titleEl.textContent = '🏃 Recent Workouts (through ' + formatWorkoutsHeaderDate(viewDate) + ')';
+            }
+            const workoutsList = document.getElementById('workouts-list');
+            if (workoutsList) {
+                workoutsList.innerHTML = '<div class="loading">Loading workouts...</div>';
+            }
         }
 
         function initSwipeNavigation() {
@@ -1146,11 +1187,14 @@
             const date = currentViewDate;
             const signal = fetchAbortController.signal;
             document.getElementById('error-container').innerHTML = '';
+            const errors = [];
+            let timeoutId = null;
             try {
                 // Phase 1: Quick - health, recommendation, calories, weight (fastest)
-                let timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
+                timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
                 const quick = await fetchJson('/api/dashboard/quick?date=' + date, signal);
                 clearTimeout(timeoutId);
+                timeoutId = null;
                 if (date !== currentViewDate) return;
                 updateHealthCards(quick.health || {});
                 updateRecommendation(quick.recommendation || {});
@@ -1159,23 +1203,45 @@
                 const weekPlan = (quick.recommendation || {}).weekly_plan || ((quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : []);
                 updateWeekPlan(weekPlan);
                 document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                console.error('Error loading quick data:', error);
+                errors.push(error.message || String(error));
+            } finally {
+                if (timeoutId) clearTimeout(timeoutId);
+            }
 
+            timeoutId = null;
+            try {
                 // Phase 2: Charts - history, PMC
                 timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
                 const charts = await fetchJson('/api/dashboard/charts?date=' + date + '&days=10', signal);
                 clearTimeout(timeoutId);
+                timeoutId = null;
                 if (date !== currentViewDate) return;
                 updateChart(charts.history || {});
                 updatePMC(charts.pmc || {});
                 document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-
-                // Phase 3: Workouts (slowest - background + retry)
-                fetchWorkoutsOnly(date, signal);
             } catch (error) {
                 if (error.name === 'AbortError') return;
-                const msg = error.message || String(error);
+                console.error('Error loading chart data:', error);
+                errors.push(error.message || String(error));
+            } finally {
+                if (timeoutId) clearTimeout(timeoutId);
+            }
+
+            try {
+                // Phase 3: Workouts (slowest - background + retry)
+                await fetchWorkoutsOnly(date, signal);
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                console.error('Error loading workouts:', error);
+                errors.push(error.message || String(error));
+            }
+
+            if (errors.length > 0) {
+                const msg = errors[0];
                 const isTimeout = msg.includes('aborted') || msg.includes('Abort');
-                console.error('Error fetching data:', error);
                 document.getElementById('error-container').innerHTML =
                     '<div class="error">Error loading data: ' + (isTimeout ? 'Request timed out. Try a more recent date.' : msg) + '</div>';
             }
@@ -1969,11 +2035,14 @@
             }
         }
         
-        async function loadManualValues() {
+        async function loadManualValues(viewDate = currentViewDate) {
             try {
-                const response = await fetch('/api/manual-values?date=' + currentViewDate);
+                const response = await fetch('/api/manual-values?date=' + viewDate);
                 if (response.ok) {
                     const data = await response.json();
+                    if (viewDate !== currentViewDate) {
+                        return;
+                    }
                     Object.entries(data).forEach(([metric, value]) => {
                         if (value !== null && value !== undefined) {
                             manualValues[metric] = value;
@@ -2229,7 +2298,7 @@
             // Force today as default view date on page load
             currentViewDate = getTodayDate();
             updateDateNavigation();
-            await loadManualValues();  // Wait for manual values to load first
+            await loadManualValues(currentViewDate);  // Wait for manual values to load first
             await fetchData();         // Then fetch automated data (which respects manual overrides)
         }
         initialLoad();
