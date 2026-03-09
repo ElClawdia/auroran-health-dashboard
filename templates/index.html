@@ -1153,9 +1153,37 @@
             if (!res.ok) throw new Error(data.error || 'Request failed (status ' + res.status + ')');
             return data;
         }
+        async function fetchJsonWithTimeout(url, signal, timeoutMs = FETCH_TIMEOUT_MS) {
+            const localController = new AbortController();
+            const abortLocal = () => localController.abort();
+            signal.addEventListener('abort', abortLocal, { once: true });
+            if (signal.aborted) {
+                localController.abort();
+            }
+            const timeoutId = setTimeout(() => localController.abort(), timeoutMs);
+            try {
+                return await fetchJson(url, localController.signal);
+            } finally {
+                clearTimeout(timeoutId);
+                signal.removeEventListener('abort', abortLocal);
+            }
+        }
         async function fetchWorkoutsOnly(date, signal) {
             // Phase 3 only - retries allowed
-            const workoutsRes = await fetch('/api/workouts?before_date=' + date + '&limit=10', { signal });
+            const localController = new AbortController();
+            const abortLocal = () => localController.abort();
+            signal.addEventListener('abort', abortLocal, { once: true });
+            if (signal.aborted) {
+                localController.abort();
+            }
+            const timeoutId = setTimeout(() => localController.abort(), FETCH_TIMEOUT_MS);
+            let workoutsRes;
+            try {
+                workoutsRes = await fetch('/api/workouts?before_date=' + date + '&limit=10', { signal: localController.signal });
+            } finally {
+                clearTimeout(timeoutId);
+                signal.removeEventListener('abort', abortLocal);
+            }
             if (date !== currentViewDate) return;
             if (!workoutsRes.ok) return;
             const isStale = workoutsRes.headers.get('X-Workouts-Stale') === 'true';
@@ -1187,60 +1215,65 @@
             const date = currentViewDate;
             const signal = fetchAbortController.signal;
             document.getElementById('error-container').innerHTML = '';
-            const errors = [];
-            let timeoutId = null;
-            try {
-                // Phase 1: Quick - health, recommendation, calories, weight (fastest)
-                timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
-                const quick = await fetchJson('/api/dashboard/quick?date=' + date, signal);
-                clearTimeout(timeoutId);
-                timeoutId = null;
-                if (date !== currentViewDate) return;
-                updateHealthCards(quick.health || {});
-                updateRecommendation(quick.recommendation || {});
-                updateCalories(quick.calories || {});
-                updateWeight(quick.weight || {});
-                const weekPlan = (quick.recommendation || {}).weekly_plan || ((quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : []);
-                updateWeekPlan(weekPlan);
-                document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-            } catch (error) {
-                if (error.name === 'AbortError') return;
-                console.error('Error loading quick data:', error);
-                errors.push(error.message || String(error));
-            } finally {
-                if (timeoutId) clearTimeout(timeoutId);
-            }
+            const tasks = [
+                {
+                    label: 'health',
+                    promise: fetchJsonWithTimeout('/api/health/today?date=' + date, signal).then(data => {
+                        if (date !== currentViewDate) return;
+                        updateHealthCards(data || {});
+                        document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+                    })
+                },
+                {
+                    label: 'recommendation',
+                    promise: fetchJsonWithTimeout('/api/recommendations/today?date=' + date, signal).then(data => {
+                        if (date !== currentViewDate) return;
+                        updateRecommendation(data || {});
+                        const weekPlan = (data || {}).weekly_plan || ((data || {}).alternatives ? generateWeekPlan(data) : []);
+                        updateWeekPlan(weekPlan);
+                        document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+                    })
+                },
+                {
+                    label: 'calories',
+                    promise: fetchJsonWithTimeout('/api/calories?date=' + date, signal).then(data => {
+                        if (date !== currentViewDate) return;
+                        updateCalories(data || {});
+                        document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+                    })
+                },
+                {
+                    label: 'weight',
+                    promise: fetchJsonWithTimeout('/api/weight?date=' + date, signal).then(data => {
+                        if (date !== currentViewDate) return;
+                        updateWeight(data || {});
+                        document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+                    })
+                },
+                {
+                    label: 'charts',
+                    promise: fetchJsonWithTimeout('/api/dashboard/charts?date=' + date + '&days=10', signal).then(charts => {
+                        if (date !== currentViewDate) return;
+                        updateChart(charts.history || {});
+                        updatePMC(charts.pmc || {});
+                        document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+                    })
+                },
+                {
+                    label: 'workouts',
+                    promise: fetchWorkoutsOnly(date, signal)
+                }
+            ];
 
-            timeoutId = null;
-            try {
-                // Phase 2: Charts - history, PMC
-                timeoutId = setTimeout(() => fetchAbortController.abort(), FETCH_TIMEOUT_MS);
-                const charts = await fetchJson('/api/dashboard/charts?date=' + date + '&days=10', signal);
-                clearTimeout(timeoutId);
-                timeoutId = null;
-                if (date !== currentViewDate) return;
-                updateChart(charts.history || {});
-                updatePMC(charts.pmc || {});
-                document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-            } catch (error) {
-                if (error.name === 'AbortError') return;
-                console.error('Error loading chart data:', error);
-                errors.push(error.message || String(error));
-            } finally {
-                if (timeoutId) clearTimeout(timeoutId);
-            }
+            const results = await Promise.allSettled(tasks.map(task => task.promise));
+            const errors = results
+                .map((result, index) => ({ result, label: tasks[index].label }))
+                .filter(({ result }) => result.status === 'rejected' && result.reason?.name !== 'AbortError');
 
-            try {
-                // Phase 3: Workouts (slowest - background + retry)
-                await fetchWorkoutsOnly(date, signal);
-            } catch (error) {
-                if (error.name === 'AbortError') return;
-                console.error('Error loading workouts:', error);
-                errors.push(error.message || String(error));
-            }
-
+            if (date !== currentViewDate) return;
             if (errors.length > 0) {
-                const msg = errors[0];
+                console.error('Dashboard fetch errors:', errors);
+                const msg = errors[0].result.reason?.message || String(errors[0].result.reason || 'Request failed');
                 const isTimeout = msg.includes('aborted') || msg.includes('Abort');
                 document.getElementById('error-container').innerHTML =
                     '<div class="error">Error loading data: ' + (isTimeout ? 'Request timed out. Try a more recent date.' : msg) + '</div>';

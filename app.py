@@ -40,8 +40,9 @@ RECENT_WORKOUTS_CACHE_FILE = log_dir / "recent_workouts_cache.json"
 RECENT_WORKOUTS_CACHE_TTL_SECONDS = 300
 ENABLE_INFLUX_WORKOUT_REFRESH = os.getenv("ENABLE_INFLUX_WORKOUT_REFRESH", "1") == "1"
 WORKOUT_READ_MEASUREMENT = os.getenv("WORKOUT_READ_MEASUREMENT", "workout_cache")
+WORKOUT_FALLBACK_MEASUREMENT = "workouts"
 WORKOUT_READ_MEASUREMENTS = tuple(
-    dict.fromkeys(m for m in (WORKOUT_READ_MEASUREMENT, "workouts") if m)
+    dict.fromkeys(m for m in (WORKOUT_READ_MEASUREMENT, WORKOUT_FALLBACK_MEASUREMENT) if m)
 )
 
 # Setup logging
@@ -139,6 +140,7 @@ _recent_workouts_lock = threading.Lock()
 _pmc_cache = {"data": None, "expires": None}
 _weight_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
 _dashboard_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
+_workout_day_cache: dict[str, tuple[list[dict], datetime]] = {}
 CACHE_TTL_SECONDS = 30  # 30 seconds - quick refresh after syncing
 WORKOUT_INDEX_TTL_SECONDS = 600  # 10 minutes
 WORKOUT_INDEX_RANGE_DAYS = 42
@@ -154,6 +156,7 @@ _workout_index_lock = threading.Lock()
 def _invalidate_workout_caches() -> None:
     global _workout_cache
     _workout_cache = {"data": None, "expires": None}
+    _workout_day_cache.clear()
     with _recent_workouts_lock:
         _recent_workouts_cache["data"] = None
         _recent_workouts_cache["loaded_at"] = None
@@ -191,23 +194,15 @@ def _save_recent_workouts_cache_to_disk(data: list[dict]):
         logger.warning(f"Failed to save recent workouts cache: {e}")
 
 
-def _workout_measurement_filter() -> str:
-    clauses = [f'r._measurement == "{measurement}"' for measurement in WORKOUT_READ_MEASUREMENTS]
+def _workout_measurement_filter(measurements: tuple[str, ...] | list[str] | None = None) -> str:
+    measurements = tuple(measurements or WORKOUT_READ_MEASUREMENTS)
+    clauses = [f'r._measurement == "{measurement}"' for measurement in measurements]
     if not clauses:
         return '|> filter(fn: (r) => false)'
     return f'|> filter(fn: (r) => {" or ".join(clauses)})'
 
 
-def _fetch_workout_records(
-    start_dt: datetime,
-    stop_dt: datetime,
-    start_date: str | None = None,
-    end_date: str | None = None,
-) -> list[dict]:
-    """Read workouts from all configured workout measurements and de-duplicate them."""
-    if not query_api:
-        return []
-
+def _workout_range_days(start_dt: datetime, start_date: str | None = None, min_days: int = 42) -> int:
     now = datetime.now().date()
     earliest_date = start_dt.date()
     if start_date:
@@ -215,7 +210,21 @@ def _fetch_workout_records(
             earliest_date = min(earliest_date, datetime.strptime(start_date, "%Y-%m-%d").date())
         except ValueError:
             pass
-    range_days = min(max((now - earliest_date).days + 7, 42), 4000)
+    return min(max((now - earliest_date).days + 7, min_days), 4000)
+
+
+def _query_workout_measurements(
+    measurements: tuple[str, ...] | list[str],
+    range_days: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[dict]:
+    if not query_api:
+        return []
+
+    measurements = tuple(m for m in measurements if m)
+    if not measurements:
+        return []
 
     date_filters = []
     if start_date:
@@ -229,7 +238,7 @@ def _fetch_workout_records(
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{range_days}d)
-      {_workout_measurement_filter()}
+      {_workout_measurement_filter(measurements)}
       {date_filter}
     '''
 
@@ -251,6 +260,91 @@ def _fetch_workout_records(
     records = list(workouts.values())
     records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
     return _dedupe_workouts(records)
+
+
+def _fetch_workout_records(
+    start_dt: datetime,
+    stop_dt: datetime,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    min_results: int = 1,
+    allow_legacy_fallback: bool = True,
+) -> list[dict]:
+    """Read workouts from the canonical cache and optionally fall back to legacy data."""
+    if not query_api:
+        return []
+
+    range_days = _workout_range_days(start_dt, start_date=start_date)
+    primary_records = _query_workout_measurements(
+        [WORKOUT_READ_MEASUREMENT],
+        range_days,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if (
+        not allow_legacy_fallback
+        or WORKOUT_FALLBACK_MEASUREMENT == WORKOUT_READ_MEASUREMENT
+        or len(primary_records) >= max(1, min_results)
+    ):
+        return primary_records
+
+    legacy_records = _query_workout_measurements(
+        [WORKOUT_FALLBACK_MEASUREMENT],
+        range_days,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not legacy_records:
+        return primary_records
+
+    merged = sorted(
+        primary_records + legacy_records,
+        key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+        reverse=True,
+    )
+    return _dedupe_workouts(merged)
+
+
+def _get_recent_workouts_for_date_from_cache(date: str) -> tuple[list[dict], bool]:
+    _load_recent_workouts_cache_from_disk()
+    with _recent_workouts_lock:
+        data = list(_recent_workouts_cache.get("data") or [])
+
+    if not data:
+        return [], False
+
+    dates = [w.get("date", "") for w in data if w.get("date")]
+    if not dates:
+        return [], False
+
+    covered = min(dates) <= date <= max(dates)
+    rows = [w for w in data if w.get("date") == date]
+    rows = sorted(rows, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    return _dedupe_workouts(rows), covered
+
+
+def _get_workout_rows_for_date(date: str) -> list[dict]:
+    now = datetime.now()
+    cached, expires = _workout_day_cache.get(date, (None, None))
+    if cached is not None and expires and now < expires:
+        return cached
+
+    cache_rows, covered = _get_recent_workouts_for_date_from_cache(date)
+    if covered:
+        _workout_day_cache[date] = (cache_rows, now + timedelta(seconds=RECENT_WORKOUTS_CACHE_TTL_SECONDS))
+        return cache_rows
+
+    target_dt = datetime.strptime(date, "%Y-%m-%d")
+    rows = _fetch_workout_records(
+        target_dt,
+        target_dt + timedelta(days=1),
+        start_date=date,
+        end_date=date,
+        min_results=1,
+        allow_legacy_fallback=True,
+    )
+    _workout_day_cache[date] = (rows, now + timedelta(seconds=RECENT_WORKOUTS_CACHE_TTL_SECONDS))
+    return rows
 
 
 def _refresh_recent_workouts_cache_async(before_date: str | None):
@@ -289,7 +383,14 @@ def _fetch_workouts_recent_fast(before_date: str | None, limit: int) -> list[dic
     start_dt = datetime.now() - timedelta(days=14)
     stop_dt = datetime.now() + timedelta(days=1)
     try:
-        records = _fetch_workout_records(start_dt, stop_dt, start_date=cutoff, end_date=before_date)
+        records = _fetch_workout_records(
+            start_dt,
+            stop_dt,
+            start_date=cutoff,
+            end_date=before_date,
+            min_results=limit,
+            allow_legacy_fallback=True,
+        )
     except Exception:
         return []
     return records[:limit]
@@ -915,6 +1016,8 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
         stop_dt,
         start_date=cutoff_date.isoformat(),
         end_date=before_date,
+        min_results=limit,
+        allow_legacy_fallback=True,
     )
     return records[:limit]
 
@@ -1212,18 +1315,10 @@ def manual_values():
 @app.route('/api/recommendations/today')
 @login_required
 def recommendations_today():
-    """Get today's exercise recommendations with user sport/day constraints."""
-    health_data = get_mock_health_today()
+    """Get exercise recommendations for the selected dashboard date."""
+    date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
     user = get_current_user() or {}
-    allowed_sports = user.get("allowed_sports", ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"])
-    max_days = user.get("max_workout_days", 6)
-
-    rec = planner.get_recommendation(
-        health_data,
-        allowed_sports=allowed_sports,
-        max_workout_days=max_days,
-    )
-    return jsonify(rec)
+    return jsonify(_dash_fetch_recommendations(date, user))
 
 
 @app.route('/api/calories')
@@ -1995,7 +2090,7 @@ def _fetch_calorie_breakdown_for_date(date: str, user: dict | None = None) -> di
             daily_row = match.iloc[-1].to_dict()
 
     manual_data = _fetch_manual_history(query_start_dt, stop_dt, ["weight", "steps", "calories"])
-    workout_rows = _fetch_workout_rows_by_date(target_dt, target_dt + timedelta(days=1), date, date).get(date, [])
+    workout_rows = _get_workout_rows_for_date(date)
     return _get_calorie_breakdown(date, user=user, daily_row=daily_row, manual_data=manual_data, workout_rows=workout_rows)
 
 
@@ -2003,8 +2098,7 @@ def _get_workout_calories(date: str, weight_kg: float | None = None) -> float:
     """Sum workout calories for a date. If missing, estimate from duration."""
     if not query_api:
         return 0.0
-    target_dt = datetime.strptime(date, "%Y-%m-%d")
-    rows = _fetch_workout_records(target_dt, target_dt + timedelta(days=1), start_date=date, end_date=date)
+    rows = _get_workout_rows_for_date(date)
     return _calculate_workout_calories_for_rows(rows, weight_kg)
 
 
