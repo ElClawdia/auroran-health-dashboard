@@ -125,14 +125,18 @@ class StravaClient:
         
         activities = []
         for activity in all_results:
-            # Extract time from start_date_local (e.g., "2026-02-15T15:25:30Z" -> "15:25")
-            start_time = activity.get("start_date_local", "")
-            time_str = start_time[11:16] if len(start_time) > 11 else ""
+            start_local = activity.get("start_date_local", "") or ""
+            start_utc = activity.get("start_date", "") or ""
+            date_str = start_local[:10] if len(start_local) >= 10 else start_utc[:10]
+            time_source = start_local or start_utc
+            time_str = time_source[11:16] if len(time_source) >= 16 else ""
             
             activities.append({
                 "id": activity.get("id"),
-                "date": activity.get("start_date", "")[:10],
+                "date": date_str,
                 "time": time_str,
+                "start_date_local": start_local,
+                "start_date_utc": start_utc,
                 "type": activity.get("type", "Unknown"),
                 "name": activity.get("name", ""),
                 "duration": int(activity.get("moving_time", 0) / 60),  # Convert to minutes

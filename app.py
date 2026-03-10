@@ -17,7 +17,7 @@ from collections import defaultdict
 from zoneinfo import ZoneInfo
 from datetime import time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for, Response, send_from_directory
 from werkzeug.utils import secure_filename
 from influxdb_client import InfluxDBClient, Point, WriteOptions
@@ -1619,11 +1619,21 @@ def strava_sync():
 
             for activity in activities:
                 workout_date = activity.get("date", "")
-                activity_ts = datetime.strptime(workout_date, "%Y-%m-%d").replace(hour=12, minute=0, second=0) if workout_date else datetime.now()
-                if activity.get("time"):
+                activity_ts = None
+                for raw_ts in (activity.get("start_date_utc"), activity.get("start_date")):
+                    if not raw_ts:
+                        continue
+                    try:
+                        activity_ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).astimezone(timezone.utc)
+                        break
+                    except ValueError:
+                        continue
+                if activity_ts is None:
+                    activity_ts = datetime.strptime(workout_date, "%Y-%m-%d").replace(hour=12, minute=0, second=0, tzinfo=timezone.utc) if workout_date else datetime.now(timezone.utc)
+                if activity.get("time") and workout_date and not activity.get("start_date_utc"):
                     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
                         try:
-                            activity_ts = datetime.strptime(f"{workout_date} {activity.get('time')}", fmt)
+                            activity_ts = datetime.strptime(f"{workout_date} {activity.get('time')}", fmt).replace(tzinfo=timezone.utc)
                             break
                         except ValueError:
                             continue
@@ -1675,22 +1685,34 @@ def _fetch_daily_loads_from_influx(query_days=120):
     """Fetch daily training loads from InfluxDB.
 
     Reads the canonical workout cache and sums daily suffer_score
-    (Strava Relative Effort).
+    (Strava Relative Effort). Reconstruct full workout rows first so
+    repaired Strava writes do not double-count load.
     """
-    from collections import defaultdict
-
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{query_days}d)
       |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
-      |> filter(fn: (r) => r._field == "suffer_score")
+      |> filter(fn: (r) => r._field == "suffer_score" or r._field == "strava_id" or r._field == "start_time" or r._field == "name")
     '''
 
-    tables = query_api.query_stream(query)
+    workouts = {}
+    for record in query_api.query_stream(query):
+        key = f'{record.get_time()}'
+        entry = workouts.setdefault(
+            key,
+            {
+                "date": record.values.get("date", ""),
+                "type": record.values.get("type", ""),
+            },
+        )
+        entry[record.get_field()] = record.get_value()
+
     by_date = defaultdict(float)
-    for record in tables:
-        date = record.values.get('date', '')
-        load = record.get_value() or 0
+    records = list(workouts.values())
+    records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    for workout in _dedupe_workouts(records):
+        date = workout.get("date", "")
+        load = workout.get("suffer_score") or 0
         if date:
             by_date[date] += float(load)
 

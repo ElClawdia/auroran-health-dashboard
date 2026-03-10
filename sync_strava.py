@@ -22,6 +22,7 @@ from config import (
     STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN,
 )
 from datetime import datetime, timedelta, date, timezone
+from collections import defaultdict
 
 # Get fresh Strava token (auto-refreshes if needed)
 try:
@@ -40,8 +41,23 @@ from influxdb_client import InfluxDBClient, Point
 from training_load import calculate_training_load
 
 
-def build_activity_timestamp(activity_date: str, activity_time: str) -> datetime:
-    """Return a stable UTC timestamp for a workout event."""
+def _parse_iso_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def build_activity_timestamp(activity: dict) -> datetime:
+    """Return the workout's UTC timestamp, preferring Strava's UTC start time."""
+    parsed = _parse_iso_datetime(activity.get("start_date_utc") or activity.get("start_date"))
+    if parsed:
+        return parsed.astimezone(timezone.utc)
+
+    activity_date = activity.get("date", "")
+    activity_time = activity.get("time", "")
     if activity_date and activity_time:
         for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
             try:
@@ -51,6 +67,43 @@ def build_activity_timestamp(activity_date: str, activity_time: str) -> datetime
     if activity_date:
         return datetime.strptime(activity_date, "%Y-%m-%d").replace(hour=12, tzinfo=timezone.utc)
     return datetime.now(timezone.utc)
+
+
+def _fetch_existing_activity_meta(query_api, range_days: int) -> dict[str, dict]:
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -{range_days}d)
+      |> filter(fn: (r) => r._measurement == "workouts" or r._measurement == "workout_cache")
+      |> filter(fn: (r) => r._field == "strava_id" or r._field == "start_time")
+    '''
+
+    by_point = {}
+    for record in query_api.query_stream(query):
+        key = f'{record.values.get("_measurement", "")}|{record.get_time()}'
+        entry = by_point.setdefault(
+            key,
+            {
+                "measurement": record.values.get("_measurement", ""),
+                "date": record.values.get("date", ""),
+            },
+        )
+        entry[record.get_field()] = record.get_value()
+
+    by_id: dict[str, dict] = defaultdict(
+        lambda: {"measurements": set(), "dates": set(), "times": set()}
+    )
+    for entry in by_point.values():
+        strava_id = str(entry.get("strava_id") or "").strip()
+        if not strava_id or not strava_id.isdigit():
+            continue
+        meta = by_id[strava_id]
+        meta["measurements"].add(entry.get("measurement", ""))
+        if entry.get("date"):
+            meta["dates"].add(entry["date"])
+        if entry.get("start_time"):
+            meta["times"].add(entry["start_time"])
+
+    return by_id
 import argparse
 
 
@@ -108,37 +161,37 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
         
         print(f"Syncing {len(activities)} activities to InfluxDB...")
         
-        # Get existing Strava IDs from InfluxDB to avoid duplicates
+        # Get existing Strava IDs + stored date/time so we can repair mismatches.
         query_api = influxdb.query_api()
         # Use range that matches our sync - extend for full historical syncs
         range_days = min(max(fetch_days + 30, 365), 4000)  # 4000d ~ 11 years
-        existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -{range_days}d) |> filter(fn: (r) => r._measurement == "workouts") |> filter(fn: (r) => r._field == "strava_id")'
         try:
-            result = query_api.query(existing_query)
-            existing_ids = set()
-            
-            # Extract IDs from query result
-            for table in result:
-                for record in table.records:
-                    val = str(record.get_value())
-                    if val.isdigit():
-                        existing_ids.add(val)
-            
+            existing_meta = _fetch_existing_activity_meta(query_api, range_days)
+            existing_ids = set(existing_meta.keys())
             print(f"Found {len(existing_ids)} existing Strava IDs")
         except Exception as e:
             print(f"Query error: {e}")
+            existing_meta = {}
             existing_ids = set()
         
         print(f"Found {len(existing_ids)} existing workouts in InfluxDB")
         
         synced = 0
+        repaired = 0
         skipped = 0
         for activity in activities:
             strava_id = str(activity.get("id", ""))
             date = activity.get("date", "")
-            
-            # Skip if already exists (by Strava ID)
-            if strava_id in existing_ids:
+            time = activity.get("time", "")
+            meta = existing_meta.get(strava_id)
+
+            # Skip only if the activity is already stored with matching local date/time
+            # in both measurements. Otherwise rewrite it to repair stale UTC/local mismatches.
+            if meta and {"workouts", "workout_cache"}.issubset(meta["measurements"]) and (
+                not date or date in meta["dates"]
+            ) and (
+                not time or time in meta["times"]
+            ):
                 skipped += 1
                 continue
                 
@@ -146,7 +199,7 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                 strava_id = str(activity.get("id", ""))
                 date = activity.get("date", "")
                 time = activity.get("time", "")
-                activity_ts = build_activity_timestamp(date, time)
+                activity_ts = build_activity_timestamp(activity)
                 # Use Strava ID as part of measurement for idempotent writes
                 # Ensure all numeric fields are float to avoid type conflicts, handle None
                 def to_float(val, default=0.0):
@@ -205,11 +258,24 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                 
                 write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=cache_point)
                 existing_ids.add(strava_id)  # Add to avoid duplicates in same run
-                synced += 1
+                if meta:
+                    meta["measurements"].update({"workouts", "workout_cache"})
+                    if date:
+                        meta["dates"].add(date)
+                    if time:
+                        meta["times"].add(time)
+                    repaired += 1
+                else:
+                    existing_meta[strava_id] = {
+                        "measurements": {"workouts", "workout_cache"},
+                        "dates": {date} if date else set(),
+                        "times": {time} if time else set(),
+                    }
+                    synced += 1
             except Exception as e:
                 print(f"Error syncing activity {activity.get('id')}: {e}")
         
-        print(f"Synced {synced} new, skipped {skipped} existing")
+        print(f"Synced {synced} new, repaired {repaired}, skipped {skipped} existing")
 
         # Write recent workouts cache to disk using Influx data (not just latest API results)
         try:
