@@ -1684,20 +1684,20 @@ def strava_sync():
 def _fetch_daily_loads_from_influx(query_days=120):
     """Fetch daily training loads from InfluxDB.
 
-    Reads the canonical workout cache and sums daily suffer_score
-    (Strava Relative Effort). Reconstruct full workout rows first so
-    repaired Strava writes do not double-count load.
+    Reads the same workout measurements as Recent Workouts and sums
+    daily suffer_score (Strava Relative Effort). Reconstruct full
+    workout rows first so repaired/duplicated writes do not double-count load.
     """
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{query_days}d)
-      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
+      {_workout_measurement_filter(WORKOUT_READ_MEASUREMENTS)}
       |> filter(fn: (r) => r._field == "suffer_score" or r._field == "strava_id" or r._field == "start_time" or r._field == "name")
     '''
 
     workouts = {}
     for record in query_api.query_stream(query):
-        key = f'{record.get_time()}'
+        key = f'{record.values.get("_measurement", "")}|{record.get_time()}'
         entry = workouts.setdefault(
             key,
             {
