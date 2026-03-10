@@ -542,6 +542,34 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
     return filtered[:limit], (stale or loading)
 
 
+def _extend_recent_workouts_with_cached_tail(
+    fresh_rows: list[dict],
+    before_date: str | None,
+    limit: int,
+) -> list[dict]:
+    """Fill older tail rows from cache without overriding the newest live rows."""
+    rows = list(_dedupe_workouts(fresh_rows))
+    if len(rows) >= limit:
+        return rows[:limit]
+
+    cached, _ = _get_recent_workouts_from_cache(before_date, max(limit * 3, 30))
+    if not cached:
+        return rows
+
+    seen = {_workout_dedupe_key(row) for row in rows}
+    for row in cached:
+        key = _workout_dedupe_key(row)
+        if key in seen:
+            continue
+        rows.append(row)
+        seen.add(key)
+        if len(rows) >= limit:
+            break
+
+    rows = sorted(rows, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    return rows[:limit]
+
+
 def _get_pmc_params_for_user(user: dict | None) -> dict:
     """Return PMC parameters per selected style.
 
@@ -1211,23 +1239,20 @@ def workouts():
                 except ValueError:
                     pass
 
-            # Fast path for dashboard: serve from recent cache, refresh in background
+            # Fast path for dashboard: read latest workouts from Influx first so
+            # the newest activities cannot disappear behind a stale cache file.
             if before_date and limit and limit <= 10:
-                cached, stale = _get_recent_workouts_from_cache(before_date, limit)
-                if cached is not None and not stale:
-                    return jsonify(cached)
                 fresh = _fetch_workouts_recent_fast(before_date, limit)
                 if fresh:
-                    fresh = _set_recent_workouts_cache(fresh)
-                    resp = jsonify(fresh[:limit])
-                    if len(fresh) < limit:
-                        _refresh_recent_workouts_cache_async(before_date)
-                        resp.headers["X-Workouts-Stale"] = "true"
-                    return resp
+                    combined = _extend_recent_workouts_with_cached_tail(fresh, before_date, limit)
+                    _set_recent_workouts_cache(combined)
+                    return jsonify(combined[:limit])
+                cached, stale = _get_recent_workouts_from_cache(before_date, limit)
                 if cached is not None:
                     _refresh_recent_workouts_cache_async(before_date)
                     resp = jsonify(cached)
-                    resp.headers["X-Workouts-Stale"] = "true"
+                    if stale:
+                        resp.headers["X-Workouts-Stale"] = "true"
                     return resp
                 _refresh_recent_workouts_cache_async(before_date)
                 resp = jsonify([])
