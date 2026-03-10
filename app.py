@@ -38,6 +38,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_PROFILE_EXTS = {"png", "jpg", "jpeg", "webp"}
 RECENT_WORKOUTS_CACHE_FILE = log_dir / "recent_workouts_cache.json"
 RECENT_WORKOUTS_CACHE_TTL_SECONDS = 300
+RECENT_WORKOUT_QUERY_DAYS = 12
 ENABLE_INFLUX_WORKOUT_REFRESH = os.getenv("ENABLE_INFLUX_WORKOUT_REFRESH", "1") == "1"
 WORKOUT_READ_MEASUREMENT = os.getenv("WORKOUT_READ_MEASUREMENT", "workout_cache")
 WORKOUT_FALLBACK_MEASUREMENT = "workouts"
@@ -174,7 +175,7 @@ def _load_recent_workouts_cache_from_disk():
         if RECENT_WORKOUTS_CACHE_FILE.exists():
             try:
                 payload = json.loads(RECENT_WORKOUTS_CACHE_FILE.read_text())
-                _recent_workouts_cache["data"] = payload.get("data", [])
+                _recent_workouts_cache["data"] = _normalize_recent_workout_cache_rows(payload.get("data", []))
                 ts = payload.get("loaded_at")
                 _recent_workouts_cache["loaded_at"] = datetime.fromisoformat(ts) if ts else None
                 _recent_workouts_cache["measurements"] = payload.get("measurements")
@@ -187,11 +188,49 @@ def _save_recent_workouts_cache_to_disk(data: list[dict]):
         payload = {
             "loaded_at": datetime.now().isoformat(),
             "measurements": list(WORKOUT_READ_MEASUREMENTS),
-            "data": data,
+            "data": _normalize_recent_workout_cache_rows(data),
         }
         RECENT_WORKOUTS_CACHE_FILE.write_text(json.dumps(payload))
     except Exception as e:
         logger.warning(f"Failed to save recent workouts cache: {e}")
+
+
+def _normalize_recent_workout_cache_rows(rows: list[dict] | None) -> list[dict]:
+    normalized = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if not row.get("date"):
+            continue
+        if not (row.get("type") or row.get("name") or row.get("strava_id")):
+            continue
+        normalized.append(dict(row))
+    normalized = sorted(
+        normalized,
+        key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+        reverse=True,
+    )
+    return _dedupe_workouts(normalized)
+
+
+def _recent_workouts_cache_is_fresh(loaded_at: datetime | None, measurements) -> bool:
+    if not loaded_at:
+        return False
+    if measurements != list(WORKOUT_READ_MEASUREMENTS):
+        return False
+    return (datetime.now() - loaded_at).total_seconds() < RECENT_WORKOUTS_CACHE_TTL_SECONDS
+
+
+def _set_recent_workouts_cache(data: list[dict], loaded_at: datetime | None = None, persist: bool = True) -> list[dict]:
+    normalized = _normalize_recent_workout_cache_rows(data)
+    timestamp = loaded_at or datetime.now()
+    with _recent_workouts_lock:
+        _recent_workouts_cache["data"] = normalized
+        _recent_workouts_cache["loaded_at"] = timestamp
+        _recent_workouts_cache["measurements"] = list(WORKOUT_READ_MEASUREMENTS)
+    if persist:
+        _save_recent_workouts_cache_to_disk(normalized)
+    return normalized
 
 
 def _workout_measurement_filter(measurements: tuple[str, ...] | list[str] | None = None) -> str:
@@ -242,6 +281,10 @@ def _query_workout_measurements(
       {date_filter}
     '''
 
+    return _run_workout_query(query)
+
+
+def _run_workout_query(query: str) -> list[dict]:
     workouts = {}
     for record in query_api.query_stream(query):
         key = f'{record.values.get("_measurement", "")}|{record.get_time()}'
@@ -260,6 +303,38 @@ def _query_workout_measurements(
     records = list(workouts.values())
     records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
     return _dedupe_workouts(records)
+
+
+def _query_workout_measurements_window(
+    measurements: tuple[str, ...] | list[str],
+    start_dt: datetime,
+    stop_dt: datetime,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[dict]:
+    if not query_api:
+        return []
+
+    measurements = tuple(m for m in measurements if m)
+    if not measurements:
+        return []
+
+    date_filters = []
+    if start_date:
+        date_filters.append(f'r.date >= "{start_date}"')
+    if end_date:
+        date_filters.append(f'r.date <= "{end_date}"')
+    date_filter = ""
+    if date_filters:
+        date_filter = f'|> filter(fn: (r) => {" and ".join(date_filters)})'
+
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: time(v: "{start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")}"), stop: time(v: "{stop_dt.strftime("%Y-%m-%dT%H:%M:%SZ")}"))
+      {_workout_measurement_filter(measurements)}
+      {date_filter}
+    '''
+    return _run_workout_query(query)
 
 
 def _fetch_workout_records(
@@ -305,12 +380,58 @@ def _fetch_workout_records(
     return _dedupe_workouts(merged)
 
 
+def _fetch_workout_records_time_bounded(
+    start_dt: datetime,
+    stop_dt: datetime,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    min_results: int = 1,
+    allow_legacy_fallback: bool = True,
+) -> list[dict]:
+    """Read workouts with an explicit time range to avoid large historical scans."""
+    if not query_api:
+        return []
+
+    primary_records = _query_workout_measurements_window(
+        [WORKOUT_READ_MEASUREMENT],
+        start_dt,
+        stop_dt,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if (
+        not allow_legacy_fallback
+        or WORKOUT_FALLBACK_MEASUREMENT == WORKOUT_READ_MEASUREMENT
+        or len(primary_records) >= max(1, min_results)
+    ):
+        return primary_records
+
+    legacy_records = _query_workout_measurements_window(
+        [WORKOUT_FALLBACK_MEASUREMENT],
+        start_dt,
+        stop_dt,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not legacy_records:
+        return primary_records
+
+    merged = sorted(
+        primary_records + legacy_records,
+        key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+        reverse=True,
+    )
+    return _dedupe_workouts(merged)
+
+
 def _get_recent_workouts_for_date_from_cache(date: str) -> tuple[list[dict], bool]:
     _load_recent_workouts_cache_from_disk()
     with _recent_workouts_lock:
         data = list(_recent_workouts_cache.get("data") or [])
+        loaded_at = _recent_workouts_cache.get("loaded_at")
+        measurements = _recent_workouts_cache.get("measurements")
 
-    if not data:
+    if not data or not _recent_workouts_cache_is_fresh(loaded_at, measurements):
         return [], False
 
     dates = [w.get("date", "") for w in data if w.get("date")]
@@ -335,9 +456,9 @@ def _get_workout_rows_for_date(date: str) -> list[dict]:
         return cache_rows
 
     target_dt = datetime.strptime(date, "%Y-%m-%d")
-    rows = _fetch_workout_records(
-        target_dt,
-        target_dt + timedelta(days=1),
+    rows = _fetch_workout_records_time_bounded(
+        target_dt - timedelta(days=1),
+        target_dt + timedelta(days=2),
         start_date=date,
         end_date=date,
         min_results=1,
@@ -361,10 +482,7 @@ def _refresh_recent_workouts_cache_async(before_date: str | None):
             records = _fetch_workouts_recent_fast(target, 200)
             if not records or len(records) < 10:
                 records = _fetch_workouts_limited(target, 200)
-            with _recent_workouts_lock:
-                _recent_workouts_cache["data"] = records
-                _recent_workouts_cache["loaded_at"] = datetime.now()
-                _recent_workouts_cache["measurements"] = list(WORKOUT_READ_MEASUREMENTS)
+            _set_recent_workouts_cache(records, persist=False)
         except Exception as e:
             logger.warning(f"Recent workouts cache refresh failed: {e}")
         finally:
@@ -376,18 +494,22 @@ def _refresh_recent_workouts_cache_async(before_date: str | None):
 
 
 def _fetch_workouts_recent_fast(before_date: str | None, limit: int) -> list[dict]:
-    """Fast-path fetch from workout_cache using limited _time sort."""
+    """Fast-path fetch for recent workouts using a narrow time-bounded window."""
     if not query_api:
         return []
-    cutoff = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-    start_dt = datetime.now() - timedelta(days=14)
-    stop_dt = datetime.now() + timedelta(days=1)
     try:
-        records = _fetch_workout_records(
+        target_date = datetime.strptime(before_date, "%Y-%m-%d").date() if before_date else datetime.now().date()
+    except ValueError:
+        target_date = datetime.now().date()
+    cutoff_date = target_date - timedelta(days=RECENT_WORKOUT_QUERY_DAYS)
+    start_dt = datetime.combine(cutoff_date - timedelta(days=1), dt_time(0, 0, 0))
+    stop_dt = datetime.combine(target_date + timedelta(days=2), dt_time(0, 0, 0))
+    try:
+        records = _fetch_workout_records_time_bounded(
             start_dt,
             stop_dt,
-            start_date=cutoff,
-            end_date=before_date,
+            start_date=cutoff_date.isoformat(),
+            end_date=target_date.isoformat(),
             min_results=limit,
             allow_legacy_fallback=True,
         )
@@ -410,11 +532,7 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
     target = before_date or datetime.now().strftime("%Y-%m-%d")
     filtered = [w for w in data if w.get("date", "") <= target]
     filtered = sorted(filtered, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
-    stale = True
-    if loaded_at and (datetime.now() - loaded_at).total_seconds() < RECENT_WORKOUTS_CACHE_TTL_SECONDS:
-        stale = False
-    if measurements != list(WORKOUT_READ_MEASUREMENTS):
-        stale = True
+    stale = not _recent_workouts_cache_is_fresh(loaded_at, measurements)
     max_date = max((w.get("date", "") for w in data), default="")
     # If cache doesn't cover the requested date range, keep refreshing
     if (not filtered) and max_date and target <= max_date:
@@ -1096,12 +1214,20 @@ def workouts():
             # Fast path for dashboard: serve from recent cache, refresh in background
             if before_date and limit and limit <= 10:
                 cached, stale = _get_recent_workouts_from_cache(before_date, limit)
-                if cached is not None:
-                    if stale:
+                if cached is not None and not stale:
+                    return jsonify(cached)
+                fresh = _fetch_workouts_recent_fast(before_date, limit)
+                if fresh:
+                    fresh = _set_recent_workouts_cache(fresh)
+                    resp = jsonify(fresh[:limit])
+                    if len(fresh) < limit:
                         _refresh_recent_workouts_cache_async(before_date)
-                    resp = jsonify(cached)
-                    if stale:
                         resp.headers["X-Workouts-Stale"] = "true"
+                    return resp
+                if cached is not None:
+                    _refresh_recent_workouts_cache_async(before_date)
+                    resp = jsonify(cached)
+                    resp.headers["X-Workouts-Stale"] = "true"
                     return resp
                 _refresh_recent_workouts_cache_async(before_date)
                 resp = jsonify([])
