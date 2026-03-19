@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from datetime import time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from typing import Dict, List
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for, Response, send_from_directory
 from werkzeug.utils import secure_filename
 from influxdb_client import InfluxDBClient, Point, WriteOptions
@@ -55,6 +56,7 @@ logger = logging.getLogger(__name__)
 from suunto_client import SuuntoClient
 from strava_client import StravaClient, MockStravaClient
 from planner import ExercisePlanner
+from ai_analyzer import AIAnalyzer
 from training_load import calculate_training_load, calculate_ctl_atl_tsb, calculate_pmc_series, get_status_description, reload_params
 from auth import login_required, authenticate, get_current_user, update_user, get_user, hash_password
 from formula_learning import load_params, run_learning_cycle
@@ -124,6 +126,7 @@ strava = StravaClient(
     refresh_token=STRAVA_REFRESH_TOKEN
 ) if STRAVA_ACCESS_TOKEN else MockStravaClient()
 planner = ExercisePlanner()
+analyzer = AIAnalyzer()
 
 
 _workout_index_preloaded = False
@@ -1300,6 +1303,119 @@ def recommendations_today():
         max_workout_days=max_days,
     )
     return jsonify(rec)
+
+
+@app.route('/api/ai/recommendations')
+@login_required
+def ai_recommendations():
+    """AI-powered adaptive recommendations using real health data."""
+    user = get_current_user() or {}
+    allowed_sports = user.get("allowed_sports", ["cycling", "run", "swim", "gym", "xc_skiing", "kayaking"])
+    max_days = user.get("max_workout_days", 6)
+    
+    # Fetch real health data from InfluxDB
+    health_data = _fetch_latest_health_metrics()
+    
+    # Fetch recent workouts from Strava
+    recent_workouts = _fetch_recent_strava_workouts(days=14)
+    
+    # Use AI analyzer
+    rec = analyzer.get_daily_recommendation(
+        health_data=health_data,
+        allowed_sports=allowed_sports,
+        max_workout_days=max_days
+    )
+    
+    # Also get weekly plan
+    weekly_plan = analyzer.generate_adaptive_weekly_plan(
+        health_data=health_data,
+        allowed_sports=allowed_sports,
+        max_workout_days=max_days
+    )
+    
+    rec["weekly_plan"] = weekly_plan
+    return jsonify(rec)
+
+
+def _fetch_latest_health_metrics() -> Dict:
+    """Fetch latest health metrics from InfluxDB."""
+    try:
+        if not INFLUX_CLIENT:
+            return {"hrv": None, "sleep_hours": None, "resting_hr": None}
+        
+        query_api = INFLUX_CLIENT.query_api()
+        
+        # Query latest HRV
+        hrv_query = 'from(bucket:"health") |> range(start:-7d) |> filter(fn:(r)=>r._measurement=="daily_health") |> filter(fn:(r)=>r._field=="hrv") |> last()'
+        hrv_result = query_api.query(org=INFLUX_ORG, query=hrv_query)
+        hrv = None
+        for table in hrv_result:
+            for record in table.records:
+                hrv = record.get_value()
+                break
+        
+        # Query latest sleep
+        sleep_query = 'from(bucket:"health") |> range(start:-7d) |> filter(fn:(r)=>r._measurement=="daily_health") |> filter(fn:(r)=>r._field=="sleep_hours") |> last()'
+        sleep_result = query_api.query(org=INFLUX_ORG, query=sleep_query)
+        sleep_hours = None
+        for table in sleep_result:
+            for record in table.records:
+                sleep_hours = record.get_value()
+                break
+        
+        # Query latest resting HR
+        resting_hr_query = 'from(bucket:"health") |> range(start:-7d) |> filter(fn:(r)=>r._measurement=="daily_health") |> filter(fn:(r)=>r._field=="resting_heart_rate") |> last()'
+        resting_result = query_api.query(org=INFLUX_ORG, query=resting_hr_query)
+        resting_hr = None
+        for table in resting_result:
+            for record in table.records:
+                resting_hr = record.get_value()
+                break
+        
+        return {
+            "hrv": hrv,
+            "sleep_hours": sleep_hours,
+            "resting_hr": resting_hr,
+            "source": "influxdb"
+        }
+    except Exception as e:
+        print(f"Error fetching health metrics: {e}")
+        return {"hrv": None, "sleep_hours": None, "resting_hr": None, "error": str(e)}
+
+
+def _fetch_recent_strava_workouts(days: int = 14) -> List[Dict]:
+    """Fetch recent workouts from Strava."""
+    try:
+        if not STRAVA_ACCESS_TOKEN:
+            return []
+        
+        import requests
+        headers = {"Authorization": f"Bearer {STRAVA_ACCESS_TOKEN}"}
+        resp = requests.get(
+            f"https://www.strava.com/api/v3/athlete/activities?per_page={days}",
+            headers=headers
+        )
+        
+        if resp.status_code != 200:
+            return []
+        
+        activities = resp.json()
+        workouts = []
+        for a in activities:
+            date = a.get("start_date_local", "")[:10]
+            workouts.append({
+                "date": date,
+                "type": a.get("type"),
+                "duration": a.get("moving_time", 0) // 60,
+                "intensity": min(10, a.get("suffer_score", 30) / 10 + 3) if a.get("suffer_score") else 5,
+                "distance": a.get("distance", 0) / 1000,
+                "suffer_score": a.get("suffer_score")
+            })
+        
+        return workouts
+    except Exception as e:
+        print(f"Error fetching Strava workouts: {e}")
+        return []
 
 
 @app.route('/api/calories')
