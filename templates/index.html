@@ -575,9 +575,49 @@
             font-size: 0.8rem;
             color: var(--text-dim);
         }
+
+        .day-note {
+            margin-top: 6px;
+            font-size: 0.72rem;
+            line-height: 1.25;
+            color: var(--text-dim);
+        }
+
+        .day-intensity {
+            margin-top: 5px;
+            display: inline-block;
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
         
         .day-rest {
             color: var(--danger);
+        }
+
+        .feedback-box {
+            min-height: 150px;
+        }
+
+        .feedback-headline {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 10px;
+        }
+
+        .feedback-text {
+            color: var(--text);
+            line-height: 1.45;
+            margin-bottom: 10px;
+        }
+
+        .feedback-meta {
+            color: var(--text-dim);
+            font-size: 0.78rem;
         }
         
         .loading {
@@ -888,6 +928,13 @@
                     --
                 </div>
             </div>
+
+            <div class="card feedback-box">
+                <div class="card-label">🤖 Daily Feedback</div>
+                <div class="feedback-headline" id="coach-feedback-headline">--</div>
+                <div class="feedback-text" id="coach-feedback-text">No coach feedback for this date yet.</div>
+                <div class="feedback-meta" id="coach-feedback-meta"></div>
+            </div>
         </div>
         
         <!-- Weekly Plan -->
@@ -1175,6 +1222,7 @@
                 updateWeight(quick.weight || {});
                 const weekPlan = (quick.recommendation || {}).weekly_plan || ((quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : []);
                 updateWeekPlan(weekPlan);
+                fetchCoachBoxes(date, signal, weekPlan);
                 document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 
                 // Phase 2: Charts - history, PMC
@@ -1476,6 +1524,45 @@
                 data.recommendation === 'EASY' ? 'Focus on recovery this week' :
                 'Rest is essential';
         }
+
+        async function fetchCoachBoxes(date, signal, fallbackPlan) {
+            try {
+                const [weekly, feedback] = await Promise.all([
+                    fetchJson('/api/coach/weekly-plan?date=' + date, signal),
+                    fetchJson('/api/coach/daily-feedback?date=' + date, signal)
+                ]);
+                if (date !== currentViewDate) return;
+                if (weekly.items && weekly.items.length) {
+                    updateWeekPlan(weekly.items, true);
+                } else {
+                    updateWeekPlan(fallbackPlan || [], false);
+                }
+                updateDailyFeedback(feedback.feedback);
+            } catch (e) {
+                if (date !== currentViewDate) return;
+                updateWeekPlan(fallbackPlan || [], false);
+                updateDailyFeedback(null);
+            }
+        }
+
+        function updateDailyFeedback(feedback) {
+            const headline = document.getElementById('coach-feedback-headline');
+            const text = document.getElementById('coach-feedback-text');
+            const meta = document.getElementById('coach-feedback-meta');
+            if (!feedback) {
+                headline.textContent = '--';
+                text.textContent = 'No coach feedback for this date yet.';
+                meta.textContent = '';
+                return;
+            }
+            const emoji = feedback.emoji ? feedback.emoji + ' ' : '';
+            headline.textContent = emoji + (feedback.headline || 'Coach feedback');
+            text.textContent = feedback.feedback || feedback.coach_note || '--';
+            const bits = [];
+            if (feedback.date) bits.push(feedback.date);
+            if (feedback.status) bits.push(feedback.status.replace('_', ' '));
+            meta.textContent = bits.join(' · ');
+        }
         
         function updatePMC(data) {
             const ctlCard = document.getElementById('ctl-card');
@@ -1705,20 +1792,31 @@
             return plan;
         }
         
-        function updateWeekPlan(plan) {
+        function updateWeekPlan(plan, isCoachPlan = false) {
             const container = document.getElementById('week-plan');
             container.innerHTML = '';
             
             plan.forEach(day => {
-                const isRest = day.type === 'Rest';
+                const type = day.workout_type || day.type || '--';
+                const duration = day.duration_min ?? day.duration;
+                const isRest = type === 'Rest' || day.intensity === 'rest' || Number(duration) === 0;
+                const emoji = day.emoji ? day.emoji + ' ' : '';
+                const note = day.coach_note || day.note || '';
                 container.innerHTML += `
                     <div class="day-card">
-                        <div class="day-name">${day.day}</div>
-                        <div class="day-type ${isRest ? 'day-rest' : ''}">${day.type}</div>
-                        <div class="day-duration">${isRest ? 'Rest' : day.duration + ' min'}</div>
+                        <div class="day-name">${day.day || formatShortWeekday(day.date)}</div>
+                        <div class="day-type ${isRest ? 'day-rest' : ''}">${emoji}${type}</div>
+                        <div class="day-duration">${isRest ? 'Rest' : duration + ' min'}</div>
+                        ${isCoachPlan && day.intensity ? `<div class="day-intensity">${day.intensity}</div>` : ''}
+                        ${isCoachPlan && note ? `<div class="day-note">${note}</div>` : ''}
                     </div>
                 `;
             });
+        }
+
+        function formatShortWeekday(dateStr) {
+            if (!dateStr) return '';
+            return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
         }
         
         function formatWorkoutsHeaderDate(dateStr) {

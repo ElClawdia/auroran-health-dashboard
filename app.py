@@ -2328,6 +2328,95 @@ def _dash_fetch_recommendations(date: str, user: dict | None = None) -> dict:
         return {"error": str(e)}
 
 
+def _week_start_for_date(date_str: str) -> str:
+    target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    return (target - timedelta(days=target.weekday())).isoformat()
+
+
+def _field_record_value(value):
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _query_coach_records(measurement: str, tag_filters: dict[str, str], range_days: int = 30) -> list[dict]:
+    if not query_api:
+        return []
+    filters = "\n".join(
+        f'          |> filter(fn: (r) => r.{tag} == "{value}")'
+        for tag, value in tag_filters.items()
+    )
+    query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: -{range_days}d)
+          |> filter(fn: (r) => r._measurement == "{measurement}")
+{filters}
+        '''
+    rows: dict[tuple, dict] = {}
+    for table in query_api.query(query):
+        for rec in table.records:
+            values = rec.values
+            key = (
+                values.get("date", ""),
+                values.get("week_start", ""),
+                values.get("day", ""),
+                values.get("status", ""),
+                values.get("source", ""),
+            )
+            row = rows.setdefault(
+                key,
+                {
+                    "date": key[0],
+                    "week_start": key[1],
+                    "day": key[2],
+                    "status": key[3],
+                    "source": key[4],
+                },
+            )
+            row[rec.get_field()] = _field_record_value(rec.get_value())
+    return list(rows.values())
+
+
+@app.route('/api/coach/weekly-plan')
+@login_required
+def coach_weekly_plan():
+    """Read AI coach weekly_plan records for the active week."""
+    date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    try:
+        week_start = request.args.get('week_start') or _week_start_for_date(date)
+    except ValueError:
+        return jsonify({"error": "Invalid date"}), 400
+    try:
+        records = _query_coach_records("weekly_plan", {"week_start": week_start})
+        day_order = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+        records.sort(key=lambda row: (row.get("date") or "", day_order.get(row.get("day"), 99)))
+        return jsonify({"week_start": week_start, "items": records})
+    except Exception as e:
+        logger.error(f"Coach weekly plan error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/coach/daily-feedback')
+@login_required
+def coach_daily_feedback():
+    """Read AI coach daily_feedback record for the selected date."""
+    date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+        week_start = _week_start_for_date(date)
+    except ValueError:
+        return jsonify({"error": "Invalid date"}), 400
+    try:
+        records = _query_coach_records("daily_feedback", {"date": date})
+        status_order = {"adjusted": 0, "completed": 1, "checked_in": 2, "planned": 3, "missed": 4}
+        records.sort(key=lambda row: status_order.get(row.get("status"), 9))
+        feedback = records[0] if records else None
+        return jsonify({"date": date, "week_start": week_start, "feedback": feedback})
+    except Exception as e:
+        logger.error(f"Coach daily feedback error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 def _dash_fetch_pmc(days: int, end_date_str: str, user: dict | None = None) -> dict:
     """Fetch PMC data. Thread-safe."""
     try:
