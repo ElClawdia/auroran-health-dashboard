@@ -3,9 +3,10 @@
 This document defines the first frontend contract for the AI coach layer in the Auroran Health Dashboard.
 
 Goal: keep implementation simple.
-Start with **two boxes**:
-1. **Weekly Plan**
-2. **Daily Feedback**
+Start with **three boxes**:
+1. **Weekly Summary**
+2. **Weekly Plan**
+3. **Daily Feedback**
 
 The UI can read these directly from InfluxDB without waiting for deeper backend/dashboard refactors.
 
@@ -20,7 +21,70 @@ This matches the current health-dashboard setup.
 
 ---
 
-# 1) Weekly Plan Box
+# 1) Weekly Summary Box
+
+Use measurement:
+
+- **Measurement:** `weekly_summary`
+
+## Purpose
+Stores the small editable summary rendered in the dashboard card labelled **This Week**.
+
+This is separate from the full seven-day plan. Use it for the blunt weekly coaching verdict: push, progress, controlled push, or recover.
+
+## Tags
+- `week_start` — ISO date for the Monday of the training week, e.g. `2026-07-20`
+- `status` — one of:
+  - `active`
+  - `planned`
+  - `adjusted`
+  - `completed`
+- `source` — use `clawdia_coach`
+
+## Fields
+### Core fields for frontend
+- `emoji` — string, e.g. `🔥`
+- `status_label` — string shown as the main card value, e.g. `PUSH HARDER`
+- `details` — string shown below the main value
+
+### Optional context fields
+- `headline` — string
+- `recommendation` — string, e.g. `HIGH`, `MODERATE`, `EASY`, `REST`
+- `coach_note` — string
+- `tsb` — float
+- `ctl` — float
+- `atl` — float
+- `sleep_hours` — float
+- `sleep_efficiency` — float
+- `sleep_score` — float
+- `hrv` — float
+- `resting_hr` — float
+- `recovery_score` — float
+
+## Minimal frontend rendering
+For the Weekly Summary box, render:
+- `emoji`
+- `status_label`
+- `details`
+
+If no `weekly_summary` record exists, the frontend falls back to the app's automatic quick recommendation.
+
+## Example query
+```flux
+from(bucket: "health")
+  |> range(start: -30d)
+  |> filter(fn: (r) => r._measurement == "weekly_summary")
+  |> filter(fn: (r) => r.week_start == "2026-07-20")
+```
+
+## Example record shape
+```text
+weekly_summary,week_start=2026-07-20,status=active,source=clawdia_coach emoji="⚡",status_label="CONTROLLED PUSH",details="Form is workable, sleep is a little noisy, so keep pressure on without turning the week into a bonfire.",recommendation="MODERATE",tsb=-16.0,sleep_hours=6.6,hrv=42.0 1753185600000000000
+```
+
+---
+
+# 2) Weekly Plan Box
 
 Use measurement:
 
@@ -83,7 +147,7 @@ weekly_plan,week_start=2026-07-20,day=Wed,date=2026-07-22,status=planned,source=
 
 ---
 
-# 2) Daily Feedback Box
+# 3) Daily Feedback Box
 
 Use measurement:
 
@@ -205,6 +269,39 @@ Everything else can be added later without breaking the first UI.
 
 # Writing Strategy
 
+## Coaching rules
+Use Form / TSB as the main weekly pressure signal:
+- `Form > 0`: time to push it; get the lazy ass to work
+- `Form 0 to -10`: push it harder
+- `Form -10 to -20`: good area to progress
+- `Form -20 to -30`: keep on pushing, but not too hard
+- `Form < -30`: time to recover
+
+Daily recommendations must adjust the Form guidance with sleep and recovery signals:
+- sleep duration
+- sleep efficiency
+- deep sleep
+- REM sleep
+- HRV
+- resting HR
+- Oura recovery/readiness score when available
+
+Example interpretation:
+- Strong Form signal plus good sleep: be verbal and push the athlete.
+- Strong Form signal plus poor sleep: keep training, but make it controlled.
+- Deeply negative Form plus poor sleep: recovery is not optional.
+- Good sleep after a hard day: keep pressure on, but watch accumulated fatigue.
+
+When writing human-facing coach text, convert decimal sleep hours to hours and minutes:
+- write `1 hour 34 minutes`, not `1.57 hours`
+- write `6 hours 35 minutes`, not `6.58 hours`
+- numeric fields such as `sleep_hours`, `deep_sleep_hours`, and `rem_sleep_hours` should remain floats for charting/querying
+
+## Weekly Summary cadence
+- generate/update at least once per week
+- update again when Form, sleep, or recovery changes the weekly verdict
+- write one record into `weekly_summary` using `week_start`
+
 ## Weekly Plan cadence
 - generate once per week, typically Sunday
 - write one record per day into `weekly_plan`
@@ -221,8 +318,9 @@ Everything else can be added later without breaking the first UI.
 
 # Summary
 
-Two-box MVP:
+Three-box coach UI:
+- **Weekly summary box** reads from `weekly_summary`
 - **Weekly plan box** reads from `weekly_plan`
 - **Daily feedback box** reads from `daily_feedback`
 
-Both live in the existing **`health`** bucket.
+All live in the existing **`health`** bucket.

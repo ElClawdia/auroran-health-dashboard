@@ -1222,7 +1222,7 @@
                 updateWeight(quick.weight || {});
                 const weekPlan = (quick.recommendation || {}).weekly_plan || ((quick.recommendation || {}).alternatives ? generateWeekPlan(quick.recommendation) : []);
                 updateWeekPlan(weekPlan);
-                fetchCoachBoxes(date, signal, weekPlan);
+                fetchCoachBoxes(date, signal, weekPlan, quick.recommendation || {});
                 document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 
                 // Phase 2: Charts - history, PMC
@@ -1300,17 +1300,19 @@
         
         function formatHours(hours) {
             if (!hours) return '--';
-            const h = Math.floor(hours);
-            const m = Math.round((hours - h) * 60);
+            const totalMinutes = Math.round(Number(hours) * 60);
+            const h = Math.floor(totalMinutes / 60);
+            const m = totalMinutes % 60;
             return h + 'h ' + m + 'm';
         }
 
         function formatCompactHours(hours) {
             if (!hours) return null;
-            const h = Math.floor(hours);
-            const m = Math.round((hours - h) * 60);
+            const totalMinutes = Math.round(Number(hours) * 60);
+            const h = Math.floor(totalMinutes / 60);
+            const m = totalMinutes % 60;
             if (h <= 0) return m + 'm';
-            return h + 'h' + String(m).padStart(2, '0');
+            return h + 'h ' + String(m).padStart(2, '0') + 'm';
         }
 
         function updateHealthCards(data) {
@@ -1525,11 +1527,12 @@
                 'Rest is essential';
         }
 
-        async function fetchCoachBoxes(date, signal, fallbackPlan) {
+        async function fetchCoachBoxes(date, signal, fallbackPlan, fallbackRecommendation) {
             try {
-                const [weekly, feedback] = await Promise.all([
+                const [weekly, feedback, summary] = await Promise.all([
                     fetchJson('/api/coach/weekly-plan?date=' + date, signal),
-                    fetchJson('/api/coach/daily-feedback?date=' + date, signal)
+                    fetchJson('/api/coach/daily-feedback?date=' + date, signal),
+                    fetchJson('/api/coach/weekly-summary?date=' + date, signal)
                 ]);
                 if (date !== currentViewDate) return;
                 if (weekly.items && weekly.items.length) {
@@ -1538,11 +1541,32 @@
                     updateWeekPlan(fallbackPlan || [], false);
                 }
                 updateDailyFeedback(feedback.feedback);
+                updateWeeklySummary(summary.summary, fallbackRecommendation);
             } catch (e) {
                 if (date !== currentViewDate) return;
                 updateWeekPlan(fallbackPlan || [], false);
                 updateDailyFeedback(null);
+                updateWeeklySummary(null, fallbackRecommendation);
             }
+        }
+
+        function updateWeeklySummary(summary, fallbackRecommendation) {
+            const status = document.getElementById('weekly-status');
+            const details = document.getElementById('weekly-details');
+            if (!summary) {
+                const recommendation = (fallbackRecommendation || {}).recommendation || '--';
+                status.textContent = recommendation;
+                details.textContent =
+                    recommendation === 'HIGH' ? 'Great week to push volume!' :
+                    recommendation === 'MODERATE' ? 'Build steadily this week' :
+                    recommendation === 'EASY' ? 'Focus on recovery this week' :
+                    recommendation === 'REST' ? 'Rest is essential' :
+                    '--';
+                return;
+            }
+            const emoji = summary.emoji ? summary.emoji + ' ' : '';
+            status.textContent = emoji + (summary.status_label || summary.recommendation || summary.headline || '--');
+            details.textContent = summary.details || summary.coach_note || summary.feedback || '--';
         }
 
         function updateDailyFeedback(feedback) {

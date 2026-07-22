@@ -2396,6 +2396,26 @@ def coach_weekly_plan():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/coach/weekly-summary')
+@login_required
+def coach_weekly_summary():
+    """Read AI coach weekly_summary record for the active week."""
+    date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+    try:
+        week_start = request.args.get('week_start') or _week_start_for_date(date)
+    except ValueError:
+        return jsonify({"error": "Invalid date"}), 400
+    try:
+        records = _query_coach_records("weekly_summary", {"week_start": week_start})
+        status_order = {"active": 0, "adjusted": 1, "planned": 2, "completed": 3}
+        records.sort(key=lambda row: status_order.get(row.get("status"), 9))
+        summary = records[0] if records else None
+        return jsonify({"week_start": week_start, "summary": summary})
+    except Exception as e:
+        logger.error(f"Coach weekly summary error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/coach/daily-feedback')
 @login_required
 def coach_daily_feedback():
