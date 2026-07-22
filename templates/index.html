@@ -167,6 +167,22 @@
             font-weight: 600;
             margin-bottom: 4px;
         }
+
+        .card-subvalues {
+            min-height: 18px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            color: var(--text-dim);
+            font-size: 0.72rem;
+            line-height: 1.2;
+            margin-top: -2px;
+            margin-bottom: 4px;
+        }
+
+        .card-subvalues span {
+            white-space: nowrap;
+        }
         
         .card-value.editing {
             display: none;
@@ -701,6 +717,7 @@
                 <button class="card-action-btn refresh-btn" title="Use automated value">↻</button>
                 <div class="card-label">💤 Sleep</div>
                 <div class="card-value" id="sleep-value">--</div>
+                <div class="card-subvalues" id="sleep-details"></div>
                 <input type="date" class="card-date-picker">
                 <input type="text" class="card-input" id="sleep-input" placeholder="7h 30m or 7.5">
                 <div class="card-trend" id="sleep-trend"></div>
@@ -1240,10 +1257,26 @@
             return h + 'h ' + m + 'm';
         }
 
+        function formatCompactHours(hours) {
+            if (!hours) return null;
+            const h = Math.floor(hours);
+            const m = Math.round((hours - h) * 60);
+            if (h <= 0) return m + 'm';
+            return h + 'h' + String(m).padStart(2, '0');
+        }
+
         function updateHealthCards(data) {
             // Only update if no manual value is set
             if (!shouldUseManual('sleep')) {
                 document.getElementById('sleep-value').textContent = formatHours(data.sleep_hours);
+                const details = [];
+                const deep = formatCompactHours(data.deep_sleep_hours);
+                const rem = formatCompactHours(data.rem_sleep_hours);
+                const light = formatCompactHours(data.light_sleep_hours);
+                if (deep) details.push('<span>Deep ' + deep + '</span>');
+                if (rem) details.push('<span>REM ' + rem + '</span>');
+                if (light) details.push('<span>Light ' + light + '</span>');
+                document.getElementById('sleep-details').innerHTML = details.join('');
             }
             if (!shouldUseManual('hrv')) {
                 document.getElementById('hrv-value').textContent = data.hrv ? data.hrv + ' ms' : '--';
@@ -1253,6 +1286,12 @@
             }
             if (!shouldUseManual('steps')) {
                 document.getElementById('steps-value').textContent = data.steps ? data.steps.toLocaleString() : '--';
+                const stepsTrend = document.getElementById('steps-trend');
+                if (data.steps && data.steps_source_date && data.steps_source_date !== currentViewDate) {
+                    stepsTrend.innerHTML = '<span class="trend-neutral">Previous day</span>';
+                } else if (!data.trend) {
+                    stepsTrend.innerHTML = '';
+                }
             }
             
             if (data.trend) {
@@ -2040,6 +2079,11 @@
                         dates = pmcData.chart.dates || [];
                         data = pmcData.chart[metric] || [];
                     }
+                } else if (metric === 'calories') {
+                    const response = await fetch('/api/calories/history?days=30&end_date=' + currentViewDate);
+                    const calorieData = await response.json();
+                    dates = calorieData.dates || [];
+                    data = calorieData.calories || [];
                 } else {
                     // Health history data (use currentViewDate so trend matches view)
                     const response = await fetch('/api/health/history?days=30&end_date=' + currentViewDate);

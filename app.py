@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from datetime import time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from time import perf_counter
 from typing import Dict, List
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for, Response, send_from_directory
 from werkzeug.utils import secure_filename
@@ -37,9 +38,16 @@ UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_PROFILE_EXTS = {"png", "jpg", "jpeg", "webp"}
 RECENT_WORKOUTS_CACHE_FILE = log_dir / "recent_workouts_cache.json"
+PMC_DAILY_LOADS_CACHE_FILE = log_dir / "pmc_daily_loads_cache.json"
 RECENT_WORKOUTS_CACHE_TTL_SECONDS = 300
+PMC_DAILY_LOADS_CACHE_TTL_SECONDS = 900
 ENABLE_INFLUX_WORKOUT_REFRESH = os.getenv("ENABLE_INFLUX_WORKOUT_REFRESH", "1") == "1"
-WORKOUT_READ_MEASUREMENT = os.getenv("WORKOUT_READ_MEASUREMENT", "workout_cache")
+_workout_read_measurement_env = os.getenv("WORKOUT_READ_MEASUREMENT", "workout_cache").strip()
+WORKOUT_READ_MEASUREMENT = (
+    "workout_cache"
+    if _workout_read_measurement_env == "workout_cache_rebuilt"
+    else _workout_read_measurement_env
+)
 
 # Setup logging
 logging.basicConfig(
@@ -124,7 +132,7 @@ strava = StravaClient(
     client_id=STRAVA_CLIENT_ID,
     client_secret=STRAVA_CLIENT_SECRET,
     refresh_token=STRAVA_REFRESH_TOKEN
-) if STRAVA_ACCESS_TOKEN else MockStravaClient()
+) if (STRAVA_ACCESS_TOKEN or STRAVA_REFRESH_TOKEN or (Path(__file__).parent / "renew-strava-tokens" / "strava_tokens.json").exists()) else MockStravaClient()
 planner = ExercisePlanner()
 analyzer = AIAnalyzer()
 
@@ -136,9 +144,14 @@ _workout_cache = {"data": None, "expires": None}
 _recent_workouts_cache = {"data": None, "loaded_at": None, "loading": False}
 _recent_workouts_lock = threading.Lock()
 _pmc_cache = {"data": None, "expires": None}
+_pmc_daily_loads_cache = {"data": None, "loaded_at": None, "source": None, "loading": False}
+_pmc_daily_loads_lock = threading.Lock()
 _weight_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
 _dashboard_cache: dict[str, tuple[dict, datetime]] = {}  # (date -> (response, expires))
-CACHE_TTL_SECONDS = 30  # 30 seconds - quick refresh after syncing
+CACHE_TTL_SECONDS = 30
+DASHBOARD_CACHE_TTL_SECONDS = 120
+PMC_CACHE_TTL_SECONDS = 300
+INFLUX_FAST_TIMEOUT_MS = 5000
 WORKOUT_INDEX_TTL_SECONDS = 600  # 10 minutes
 WORKOUT_INDEX_RANGE_DAYS = 42
 _workout_index: dict[str, object] = {
@@ -148,6 +161,74 @@ _workout_index: dict[str, object] = {
     "loading_started_at": None,
 }
 _workout_index_lock = threading.Lock()
+
+
+def _log_perf(label: str, started_at: float, **fields):
+    parts = [f"{k}={v}" for k, v in fields.items() if v is not None]
+    suffix = f" {' '.join(parts)}" if parts else ""
+    logger.info(f"{label} took {perf_counter() - started_at:.3f}s{suffix}")
+
+
+OURA_PRIMARY_FIELDS = {
+    "sleep_duration_hours",
+    "deep_sleep_hours",
+    "rem_sleep_hours",
+    "light_sleep_hours",
+    "awake_hours",
+    "hrv_avg",
+    "resting_hr",
+    "avg_sleep_hr",
+    "sleep_efficiency",
+    "sleep_score",
+    "recovery_score",
+    "steps",
+    "active_calories",
+    "total_calories",
+}
+
+
+def _daily_health_source_rank(field: str, source: object) -> int:
+    src = "" if pd.isna(source) else str(source).lower()
+    if field == "weight":
+        if src == "fitbit":
+            return 0
+        if src == "oura":
+            return 3
+        return 1
+    if field in OURA_PRIMARY_FIELDS:
+        if src == "oura":
+            return 0
+        if src == "fitbit":
+            return 2
+        return 1
+    return 1
+
+
+def _reduce_daily_health_by_source(df: pd.DataFrame, numeric_cols: list[str]) -> pd.DataFrame:
+    """Return one row per date, preferring the intended provider for each metric."""
+    if not numeric_cols:
+        return df[["date"]].drop_duplicates()
+
+    rows = []
+    time_col = "_time" if "_time" in df.columns else None
+    source_col = "source" if "source" in df.columns else None
+    for date_value, group in df.groupby("date", sort=True):
+        row = {"date": date_value}
+        for field in numeric_cols:
+            candidates = group[["date", field] + ([source_col] if source_col else []) + ([time_col] if time_col else [])].copy()
+            candidates = candidates.dropna(subset=[field])
+            if field in OURA_PRIMARY_FIELDS and source_col:
+                candidates = candidates[candidates[source_col].fillna("").astype(str).str.lower() == "oura"]
+            if candidates.empty:
+                continue
+            candidates["_source_rank"] = candidates[source_col].apply(lambda s: _daily_health_source_rank(field, s)) if source_col else 1
+            if time_col:
+                candidates = candidates.sort_values(["_source_rank", time_col], ascending=[True, False])
+            else:
+                candidates = candidates.sort_values(["_source_rank"])
+            row[field] = candidates.iloc[0][field]
+        rows.append(row)
+    return pd.DataFrame(rows) if rows else pd.DataFrame({"date": []})
 
 
 def _load_recent_workouts_cache_from_disk():
@@ -173,6 +254,98 @@ def _save_recent_workouts_cache_to_disk(data: list[dict]):
         RECENT_WORKOUTS_CACHE_FILE.write_text(json.dumps(payload))
     except Exception as e:
         logger.warning(f"Failed to save recent workouts cache: {e}")
+
+
+def _load_pmc_daily_loads_cache_from_disk():
+    with _pmc_daily_loads_lock:
+        if _pmc_daily_loads_cache.get("data") is not None:
+            return
+        if PMC_DAILY_LOADS_CACHE_FILE.exists():
+            try:
+                payload = json.loads(PMC_DAILY_LOADS_CACHE_FILE.read_text())
+                _pmc_daily_loads_cache["data"] = payload.get("data", [])
+                _pmc_daily_loads_cache["source"] = payload.get("source")
+                ts = payload.get("loaded_at")
+                _pmc_daily_loads_cache["loaded_at"] = datetime.fromisoformat(ts) if ts else None
+            except Exception as e:
+                logger.warning(f"Failed to load PMC daily-load cache: {e}")
+
+
+def _save_pmc_daily_loads_cache_to_disk(data: list[dict], source: str):
+    try:
+        payload = {
+            "loaded_at": datetime.now().isoformat(),
+            "source": source,
+            "data": data,
+        }
+        PMC_DAILY_LOADS_CACHE_FILE.write_text(json.dumps(payload))
+    except Exception as e:
+        logger.warning(f"Failed to save PMC daily-load cache: {e}")
+
+
+def _filter_daily_loads_window(daily_loads: list[dict], query_days: int, end_date: str | None = None) -> list[dict]:
+    try:
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else datetime.now().date()
+    except ValueError:
+        end_dt = datetime.now().date()
+    start_dt = end_dt - timedelta(days=query_days - 1)
+    out = []
+    for row in daily_loads:
+        ds = row.get("date")
+        if not ds or ds < start_dt.isoformat() or ds > end_dt.isoformat():
+            continue
+        try:
+            out.append({"date": ds, "load": float(row.get("load", 0.0))})
+        except (TypeError, ValueError):
+            continue
+    return sorted(out, key=lambda x: x["date"])
+
+
+def _get_pmc_daily_loads_from_cache(query_days: int, end_date: str | None = None) -> tuple[list[dict], bool, str | None]:
+    _load_pmc_daily_loads_cache_from_disk()
+    with _pmc_daily_loads_lock:
+        cached = list(_pmc_daily_loads_cache.get("data") or [])
+        loaded_at = _pmc_daily_loads_cache.get("loaded_at")
+        source = _pmc_daily_loads_cache.get("source")
+    if not cached:
+        return [], True, source
+    filtered = _filter_daily_loads_window(cached, query_days, end_date)
+    stale = not loaded_at or (datetime.now() - loaded_at).total_seconds() > PMC_DAILY_LOADS_CACHE_TTL_SECONDS
+    return filtered, stale, source
+
+
+def _store_pmc_daily_loads_cache(daily_loads: list[dict], source: str):
+    daily_loads = sorted(
+        [{"date": row["date"], "load": float(row.get("load", 0.0))} for row in daily_loads if row.get("date")],
+        key=lambda x: x["date"],
+    )
+    with _pmc_daily_loads_lock:
+        _pmc_daily_loads_cache["data"] = daily_loads
+        _pmc_daily_loads_cache["loaded_at"] = datetime.now()
+        _pmc_daily_loads_cache["source"] = source
+    _save_pmc_daily_loads_cache_to_disk(daily_loads, source)
+
+
+def _refresh_pmc_daily_loads_async(query_days: int = 365, end_date: str | None = None):
+    if not getattr(strava, "is_configured", False):
+        return
+    with _pmc_daily_loads_lock:
+        if _pmc_daily_loads_cache.get("loading"):
+            return
+        _pmc_daily_loads_cache["loading"] = True
+
+    def _worker():
+        try:
+            loads = _fetch_daily_loads_from_strava(query_days, end_date)
+            if loads:
+                _store_pmc_daily_loads_cache(loads, "strava")
+        except Exception as e:
+            logger.warning(f"PMC daily-load cache refresh failed: {e}")
+        finally:
+            with _pmc_daily_loads_lock:
+                _pmc_daily_loads_cache["loading"] = False
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _refresh_recent_workouts_cache_async(before_date: str | None):
@@ -206,14 +379,18 @@ def _fetch_workouts_recent_fast(before_date: str | None, limit: int) -> list[dic
     """Fast-path fetch from workout_cache using limited _time sort."""
     if not query_api:
         return []
-    cutoff = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+    try:
+        target_dt = datetime.strptime(before_date, "%Y-%m-%d") if before_date else datetime.now()
+    except ValueError:
+        target_dt = datetime.now()
+    cutoff = (target_dt - timedelta(days=14)).strftime('%Y-%m-%d')
     date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}")'
     if before_date:
         date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff}" and r.date <= "{before_date}")'
 
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -14d)
+      |> range(start: {(target_dt - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00Z")}, stop: {(target_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
       |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
       {date_filter}
     '''
@@ -298,7 +475,7 @@ def _get_pmc_params_for_user(user: dict | None) -> dict:
 # Dashboard lookback windows (keep small for speed)
 WORKOUT_LOOKBACK_DAYS = 42
 HEALTH_LOOKBACK_DAYS = 42
-PMC_MIN_LOOKBACK_DAYS = 365
+PMC_MIN_LOOKBACK_DAYS = 120
 WEIGHT_LOOKBACK_DAYS = 42  # Never load more than 42 days at a time
 
 # Generate mock data for demo mode
@@ -708,6 +885,7 @@ def health_today():
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
+          |> filter(fn: (r) => r._field == "sleep_duration_hours" or r._field == "deep_sleep_hours" or r._field == "rem_sleep_hours" or r._field == "light_sleep_hours" or r._field == "awake_hours" or r._field == "hrv_avg" or r._field == "resting_hr" or r._field == "avg_sleep_hr" or r._field == "sleep_efficiency" or r._field == "sleep_score" or r._field == "steps" or r._field == "recovery_score" or r._field == "training_load" or r._field == "weight")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         result = query_api.query_data_frame(query)
@@ -725,25 +903,18 @@ def health_today():
 
         df = result.copy()
         numeric_cols = [
-            c for c in ["sleep_duration_hours", "hrv_avg", "resting_hr", "steps", "recovery_score", "training_load", "weight"]
+            c for c in ["sleep_duration_hours", "deep_sleep_hours", "rem_sleep_hours", "light_sleep_hours", "awake_hours", "hrv_avg", "resting_hr", "avg_sleep_hr", "sleep_efficiency", "sleep_score", "steps", "recovery_score", "training_load", "weight"]
             if c in df.columns
         ]
         for c in numeric_cols:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
-        if numeric_cols:
-            df = df.groupby("date", as_index=False)[numeric_cols].mean()
-        else:
-            df = df[["date"]].drop_duplicates()
+        df = _reduce_daily_health_by_source(df, numeric_cols)
 
         df = df.sort_values("date")
         
-        # Try to get data for the target date, fall back to latest
         target_row = df[df['date'] == target_date]
-        if not target_row.empty:
-            row = target_row.iloc[0]
-        else:
-            row = df.iloc[-1]
+        row = target_row.iloc[0] if not target_row.empty else pd.Series(dtype=object)
 
         def clean_number(val):
             return None if pd.isna(val) else float(val)
@@ -754,15 +925,38 @@ def health_today():
             return clean_number(row[col])
 
         steps_val = get_value("steps")
+        if steps_val is None:
+            previous_date = (target_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+            previous_row = df[df["date"] == previous_date] if "date" in df.columns else pd.DataFrame()
+            if not previous_row.empty and "steps" in previous_row.columns:
+                previous_steps = previous_row.iloc[0].get("steps")
+                if not pd.isna(previous_steps):
+                    steps_val = float(previous_steps)
+                    steps_source_date = previous_date
+                else:
+                    steps_source_date = None
+            else:
+                steps_source_date = None
+        else:
+            steps_source_date = target_date
         steps_clean = None if steps_val is None else int(float(steps_val))
         weight_val = get_value("weight")
 
         out = {
-            "date": row.get("date", target_date),
+            "date": target_date,
+            "source_date": row.get("date") if not row.empty else None,
             "sleep_hours": get_value("sleep_duration_hours"),
+            "deep_sleep_hours": get_value("deep_sleep_hours"),
+            "rem_sleep_hours": get_value("rem_sleep_hours"),
+            "light_sleep_hours": get_value("light_sleep_hours"),
+            "awake_hours": get_value("awake_hours"),
             "hrv": get_value("hrv_avg"),
             "resting_hr": get_value("resting_hr"),
+            "avg_sleep_hr": get_value("avg_sleep_hr"),
+            "sleep_efficiency": get_value("sleep_efficiency"),
+            "sleep_score": get_value("sleep_score"),
             "steps": steps_clean,
+            "steps_source_date": steps_source_date,
             "recovery_score": get_value("recovery_score"),
             "training_load": get_value("training_load")
         }
@@ -796,6 +990,7 @@ def health_history():
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {(end_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
+          |> filter(fn: (r) => r._field == "hrv_avg" or r._field == "resting_hr" or r._field == "avg_sleep_hr" or r._field == "sleep_duration_hours" or r._field == "deep_sleep_hours" or r._field == "rem_sleep_hours" or r._field == "light_sleep_hours" or r._field == "awake_hours" or r._field == "sleep_efficiency" or r._field == "sleep_score" or r._field == "recovery_score" or r._field == "steps" or r._field == "weight" or r._field == "active_calories" or r._field == "total_calories")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         result = query_api.query_data_frame(query)
@@ -816,17 +1011,14 @@ def health_history():
             # Process actual data from daily_health
             df = result.copy()
             numeric_cols = [
-                c for c in ["hrv_avg", "resting_hr", "sleep_duration_hours", "recovery_score", "steps", "weight"]
+                c for c in ["hrv_avg", "resting_hr", "avg_sleep_hr", "sleep_duration_hours", "deep_sleep_hours", "rem_sleep_hours", "light_sleep_hours", "awake_hours", "sleep_efficiency", "sleep_score", "recovery_score", "steps", "weight", "active_calories", "total_calories"]
                 if c in df.columns
             ]
             if numeric_cols:
                 for c in numeric_cols:
                     df[c] = pd.to_numeric(df[c], errors="coerce")
-                df = df.groupby("date", as_index=False)[numeric_cols].mean()
-            else:
-                df = df[["date"]].drop_duplicates()
-            df = df.sort_values("date").tail(days)
-            dates_list = df["date"].tolist()
+            df = _reduce_daily_health_by_source(df, numeric_cols)
+            df = pd.DataFrame({"date": dates_list}).merge(df, on="date", how="left")
         else:
             # No daily_health data - create empty dataframe with just dates
             df = pd.DataFrame({"date": dates_list})
@@ -835,13 +1027,13 @@ def health_history():
             return [None if pd.isna(v) else round(float(v), digits) for v in series.tolist()]
 
         # Also fetch manual values history (weight, hrv, sleep, etc.)
-        manual_data = {field: {} for field in ['weight', 'hrv', 'sleep', 'resting_hr', 'steps']}
+        manual_data = {field: {} for field in ['weight', 'hrv', 'sleep', 'resting_hr', 'steps', 'calories']}
         try:
             manual_query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -{days}d)
+              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {(end_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
               |> filter(fn: (r) => r._measurement == "manual_values")
-              |> filter(fn: (r) => r._field == "weight" or r._field == "hrv" or r._field == "sleep" or r._field == "resting_hr" or r._field == "steps")
+              |> filter(fn: (r) => r._field == "weight" or r._field == "hrv" or r._field == "sleep" or r._field == "resting_hr" or r._field == "steps" or r._field == "calories")
               |> filter(fn: (r) => r.deleted != "true")
             '''
             manual_result = query_api.query(manual_query)
@@ -867,21 +1059,38 @@ def health_history():
                     result.append(None)
             return result
 
-        dates_list = df["date"].tolist()
         hrv_auto = clean_series(df["hrv_avg"], 2) if "hrv_avg" in df else [None] * len(dates_list)
         rhr_auto = clean_series(df["resting_hr"], 2) if "resting_hr" in df else [None] * len(dates_list)
         sleep_auto = clean_series(df["sleep_duration_hours"], 2) if "sleep_duration_hours" in df else [None] * len(dates_list)
+        deep_sleep_auto = clean_series(df["deep_sleep_hours"], 2) if "deep_sleep_hours" in df else [None] * len(dates_list)
+        rem_sleep_auto = clean_series(df["rem_sleep_hours"], 2) if "rem_sleep_hours" in df else [None] * len(dates_list)
+        light_sleep_auto = clean_series(df["light_sleep_hours"], 2) if "light_sleep_hours" in df else [None] * len(dates_list)
+        awake_auto = clean_series(df["awake_hours"], 2) if "awake_hours" in df else [None] * len(dates_list)
+        avg_sleep_hr_auto = clean_series(df["avg_sleep_hr"], 2) if "avg_sleep_hr" in df else [None] * len(dates_list)
+        sleep_efficiency_auto = clean_series(df["sleep_efficiency"], 2) if "sleep_efficiency" in df else [None] * len(dates_list)
+        sleep_score_auto = clean_series(df["sleep_score"], 2) if "sleep_score" in df else [None] * len(dates_list)
         steps_auto = clean_series(df["steps"], 0) if "steps" in df else [None] * len(dates_list)
         weight_auto = clean_series(df["weight"], 2) if "weight" in df else [None] * len(dates_list)
+        active_cal_auto = clean_series(df["active_calories"], 0) if "active_calories" in df else [None] * len(dates_list)
+        total_cal_auto = clean_series(df["total_calories"], 0) if "total_calories" in df else [None] * len(dates_list)
+        calories_auto = [a if a is not None else total_cal_auto[i] for i, a in enumerate(active_cal_auto)]
 
         return jsonify({
             "dates": dates_list,
             "hrv": merge_with_manual(hrv_auto, manual_data['hrv'], dates_list),
             "resting_hr": merge_with_manual(rhr_auto, manual_data['resting_hr'], dates_list),
             "sleep": merge_with_manual(sleep_auto, manual_data['sleep'], dates_list),
+            "deep_sleep": deep_sleep_auto,
+            "rem_sleep": rem_sleep_auto,
+            "light_sleep": light_sleep_auto,
+            "awake": awake_auto,
+            "avg_sleep_hr": avg_sleep_hr_auto,
+            "sleep_efficiency": sleep_efficiency_auto,
+            "sleep_score": sleep_score_auto,
             "recovery": clean_series(df["recovery_score"], 1) if "recovery_score" in df else [],
             "steps": merge_with_manual(steps_auto, manual_data['steps'], dates_list),
-            "weight": merge_with_manual(weight_auto, manual_data['weight'], dates_list)
+            "weight": merge_with_manual(weight_auto, manual_data['weight'], dates_list),
+            "calories": merge_with_manual(calories_auto, manual_data['calories'], dates_list)
         })
     except Exception as e:
         logger.error(f"Error fetching health history: {e}")
@@ -941,12 +1150,15 @@ def _workout_dedupe_key(workout: dict) -> str:
     """Return a stable key to de-duplicate workouts from multiple sources."""
     strava_id = workout.get("strava_id")
     if strava_id:
-        return f"strava:{strava_id}"
+        sid = str(strava_id).strip()
+        if sid.endswith(".0"):
+            sid = sid[:-2]
+        return f"strava:{sid}"
     return "|".join([
-        str(workout.get("date", "")),
-        str(workout.get("start_time", "")),
-        str(workout.get("name", "")),
-        str(workout.get("type", "")),
+        str(workout.get("date", "")).strip(),
+        str(workout.get("start_time", "")).strip(),
+        str(workout.get("name", "")).strip(),
+        str(workout.get("type", "")).strip(),
     ])
 
 
@@ -964,8 +1176,8 @@ def _dedupe_workouts(records: list[dict]) -> list[dict]:
 
 
 def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
-    """Fetch only the most recent workouts (limited) using stream query."""
-    if not query_api:
+    """Fetch only the most recent workouts (limited) from both workout measurements."""
+    if not INFLUXDB_TOKEN:
         return []
     if before_date:
         try:
@@ -976,27 +1188,46 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
         date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}" and r.date <= "{before_date}")'
         range_days = min(max((datetime.now().date() - cutoff_date).days, 42), 4000)
     else:
-        cutoff_date = datetime.now().date() - timedelta(days=42)
+        target_date = datetime.now().date()
+        cutoff_date = target_date - timedelta(days=42)
         date_filter = f'|> filter(fn: (r) => r.date >= "{cutoff_date.isoformat()}")'
         range_days = 42
 
-    query = f'''
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{range_days}d)
-      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
-      {date_filter}
-    '''
     workouts = {}
-    for record in query_api.query_stream(query):
-        key = str(record.get_time())
-        entry = workouts.setdefault(
-            key,
-            {
-                "date": record.values.get("date", ""),
-                "type": record.values.get("type", ""),
-            },
-        )
-        entry[record.get_field()] = record.get_value()
+    needed_fields = (
+        'r._field == "avg_hr" or r._field == "calories" or r._field == "distance" or '
+        'r._field == "duration" or r._field == "duration_minutes" or r._field == "elevation_gain" or '
+        'r._field == "max_hr" or r._field == "name" or r._field == "start_time" or '
+        'r._field == "strava_id" or r._field == "suffer_score" or r._field == "relative_effort"'
+    )
+    influx = InfluxDBClient(
+        url=INFLUXDB_URL,
+        token=INFLUXDB_TOKEN,
+        org=INFLUXDB_ORG,
+        timeout=INFLUX_FAST_TIMEOUT_MS,
+    )
+    try:
+        local_query_api = influx.query_api()
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: {cutoff_date.strftime("%Y-%m-%dT00:00:00Z")}, stop: {(target_date + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
+          |> filter(fn: (r) => r._measurement == "workouts" or r._measurement == "{WORKOUT_READ_MEASUREMENT}")
+          |> filter(fn: (r) => {needed_fields})
+          {date_filter}
+        '''
+        for record in local_query_api.query_stream(query):
+            measurement = record.values.get("_measurement", "")
+            key = f"{measurement}:{record.get_time()}"
+            entry = workouts.setdefault(
+                key,
+                {
+                    "date": record.values.get("date", ""),
+                    "type": record.values.get("type", ""),
+                },
+            )
+            entry[record.get_field()] = record.get_value()
+    finally:
+        influx.close()
 
     if not workouts:
         return []
@@ -1004,6 +1235,60 @@ def _fetch_workouts_limited(before_date: str | None, limit: int) -> list[dict]:
     records = list(workouts.values())
     records = sorted(records, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
     return _dedupe_workouts(records)[:limit]
+
+
+def _get_daily_activity_snapshot(date: str) -> dict:
+    """Fetch the latest daily activity fields for one date."""
+    if not query_api:
+        return {}
+
+    try:
+        target_dt = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return {}
+
+    start_dt = target_dt - timedelta(days=1)
+    stop_dt = target_dt + timedelta(days=1)
+    query = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT23:59:59Z")})
+      |> filter(fn: (r) => r._measurement == "daily_health")
+      |> filter(fn: (r) => r.date == "{date}")
+      |> filter(fn: (r) => r._field == "active_calories" or r._field == "total_calories" or r._field == "steps" or r._field == "weight")
+    '''
+    out = {}
+    latest_by_field: dict[str, tuple[datetime, float]] = {}
+    for rec in query_api.query_stream(query):
+        field = rec.get_field()
+        val = rec.get_value()
+        if val is None:
+            continue
+        try:
+            fval = float(val)
+        except (TypeError, ValueError):
+            continue
+        ts = rec.get_time()
+        current = latest_by_field.get(field)
+        if current is None or ts > current[0]:
+            latest_by_field[field] = (ts, fval)
+    for field, (_ts, value) in latest_by_field.items():
+        out[field] = value
+    return out
+
+
+def _estimate_step_calories(steps: float | None, weight_kg: float | None) -> float:
+    """Estimate calories from walking steps when Apple active calories are unavailable."""
+    if steps is None or weight_kg is None:
+        return 0.0
+    try:
+        steps_val = float(steps)
+        weight_val = float(weight_kg)
+    except (TypeError, ValueError):
+        return 0.0
+    if steps_val <= 0 or weight_val <= 0:
+        return 0.0
+    # Rough walking estimate: ~0.04 kcal/step for a 70 kg person, scaled by body weight.
+    return steps_val * 0.04 * (weight_val / 70.0)
 
 
 def _load_workout_index() -> None:
@@ -1087,32 +1372,15 @@ def workouts():
             return jsonify({"error": "No workouts from InfluxDB"}), 404
         
         try:
-            # If requesting an old date, bypass recent cache and query directly
-            if before_date:
-                try:
-                    target_date = datetime.strptime(before_date, "%Y-%m-%d").date()
-                    if (datetime.now().date() - target_date).days > WORKOUT_LOOKBACK_DAYS:
-                        records = _fetch_workouts_limited(before_date, limit or 10)
-                        return jsonify(records)
-                except ValueError:
-                    pass
-
-            # Fast path for dashboard: serve from recent cache, refresh in background
             if before_date and limit and limit <= 10:
                 cached, stale = _get_recent_workouts_from_cache(before_date, limit)
-                if cached is not None:
+                if cached:
                     if stale:
                         _refresh_recent_workouts_cache_async(before_date)
                     resp = jsonify(cached)
                     if stale:
                         resp.headers["X-Workouts-Stale"] = "true"
                     return resp
-                _refresh_recent_workouts_cache_async(before_date)
-                resp = jsonify([])
-                if ENABLE_INFLUX_WORKOUT_REFRESH:
-                    resp.headers["X-Workouts-Stale"] = "true"
-                    resp.headers["Retry-After"] = "5"
-                return resp
 
             # Keep filtered reads off the slow index build path.
             if before_date or filter_date:
@@ -1164,7 +1432,7 @@ def workouts():
     data = request.json
     logger.info(f"Logging workout: {data.get('type')} - {data.get('date')}")
     try:
-        point = Point("workouts")\
+        point = Point(WORKOUT_READ_MEASUREMENT)\
             .tag("type", data.get("type", "Unknown"))\
             .tag("date", data.get("date", datetime.now().strftime("%Y-%m-%d")))\
             .field("duration_minutes", float(data.get("duration", 0)))\
@@ -1434,48 +1702,37 @@ def calories():
         return jsonify({"calories": 0, "date": date})
     
     try:
-        weight_for_workouts = None
-        if bmr is not None:
-            weight_for_workouts = meta.get("weight_kg")
-        workout_total = _get_workout_calories(date, weight_for_workouts)
         bmr, meta = _get_bmr_calories_for_user(date)
+        weight_for_workouts = meta.get("weight_kg") if bmr is not None else None
+        workout_total = _get_workout_calories(date, weight_for_workouts)
+        activity = _get_daily_activity_snapshot(date)
+        active_val = activity.get("active_calories")
+        total_val = activity.get("total_calories")
+        steps_val = activity.get("steps")
+        step_total = _estimate_step_calories(steps_val, weight_for_workouts)
         if bmr is not None:
-            total = bmr + workout_total if workout_total > 0 else bmr
+            if total_val is not None and total_val > 0:
+                total = total_val
+                source = "apple_health_total"
+            else:
+                activity_total = max(float(active_val or 0.0), float(workout_total or 0.0) + float(step_total or 0.0))
+                total = bmr + activity_total if activity_total > 0 else bmr
+                if active_val is not None and active_val > 0:
+                    source = "bmr+apple_active"
+                elif workout_total > 0 or step_total > 0:
+                    source = "bmr+activity"
+                else:
+                    source = "bmr"
             return jsonify({
                 "calories": int(total),
                 "date": date,
-                "source": "bmr+workouts" if workout_total > 0 else "bmr",
+                "source": source,
                 "bmr": round(bmr, 1),
-                "workout_calories": int(workout_total)
+                "workout_calories": int(workout_total),
+                "step_calories": int(step_total),
+                "steps": int(steps_val) if steps_val is not None else None,
+                "active_calories": int(active_val) if active_val is not None else None,
             })
-
-        # Prefer active calories from daily_health (Apple Health fallback)
-        target_dt = datetime.strptime(date, "%Y-%m-%d")
-        start_dt = target_dt - timedelta(days=1)
-        stop_dt = target_dt + timedelta(days=1)
-        
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT23:59:59Z")})
-          |> filter(fn: (r) => r._measurement == "daily_health")
-          |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "active_calories" or r._field == "total_calories")
-          |> last()
-        '''
-        result = query_api.query(query)
-        
-        active_val = None
-        total_val = None
-        for table in result:
-            for record in table.records:
-                field = record.get_field()
-                val = record.get_value()
-                if val is None:
-                    continue
-                if field == "active_calories":
-                    active_val = float(val)
-                elif field == "total_calories":
-                    total_val = float(val)
 
         if active_val is not None:
             return jsonify({"calories": int(active_val), "date": date, "source": "apple_health_active"})
@@ -1486,6 +1743,20 @@ def calories():
     except Exception as e:
         logger.error(f"Error fetching calories: {e}")
         return jsonify({"calories": 0, "date": date, "error": str(e)})
+
+
+@app.route('/api/calories/history')
+@login_required
+def calories_history():
+    """Get computed calories history anchored to the selected end date."""
+    days = request.args.get('days', 30, type=int)
+    end_date = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
+    try:
+        user = get_current_user()
+        return jsonify(_get_calories_history(days, end_date, user=user))
+    except Exception as e:
+        logger.error(f"Calories history error: {e}")
+        return jsonify({"error": str(e), "dates": [], "calories": []}), 500
 
 
 @app.route('/api/weight', methods=['GET', 'POST'])
@@ -1648,30 +1919,238 @@ def strava_sync():
         return jsonify({"error": str(e)}), 500
 
 
-def _fetch_daily_loads_from_influx(query_days=120):
-    """Fetch daily training loads from InfluxDB.
+def _fetch_daily_loads_from_influx(query_days=120, end_date: str | None = None):
+    """Fetch daily training loads from raw workout_cache rows.
 
-    Reads the canonical workout cache and sums daily suffer_score
-    (Strava Relative Effort).
+    The grouped Flux query over suffer_score is unstable on this InfluxDB
+    instance, but the raw workout stream is stable. We aggregate daily loads
+    in Python after de-duplicating workouts.
     """
-    from collections import defaultdict
+    if not INFLUXDB_TOKEN:
+        return []
+    try:
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.now()
+    except ValueError:
+        end_dt = datetime.now()
+    start_dt = end_dt - timedelta(days=query_days - 1)
 
-    query = f'''
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{query_days}d)
-      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
-      |> filter(fn: (r) => r._field == "suffer_score")
-    '''
+    workouts_by_time: dict[str, dict] = {}
+    needed_fields = (
+        'r._field == "suffer_score" or r._field == "relative_effort" or '
+        'r._field == "strava_id" or r._field == "start_time" or r._field == "name"'
+    )
+    influx = InfluxDBClient(
+        url=INFLUXDB_URL,
+        token=INFLUXDB_TOKEN,
+        org=INFLUXDB_ORG,
+        timeout=INFLUX_FAST_TIMEOUT_MS,
+    )
+    try:
+        local_query_api = influx.query_api()
+        measurements = ["workouts", WORKOUT_READ_MEASUREMENT]
+        measurement_filter = " or ".join([f'r._measurement == "{m}"' for m in measurements])
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {(end_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
+          |> filter(fn: (r) => {measurement_filter})
+          |> filter(fn: (r) => {needed_fields})
+          |> filter(fn: (r) => r.date >= "{start_dt.strftime("%Y-%m-%d")}" and r.date <= "{end_dt.strftime("%Y-%m-%d")}")
+        '''
+        for record in local_query_api.query_stream(query):
+            measurement = record.values.get("_measurement", "")
+            key = f"{measurement}:{record.get_time()}"
+            row = workouts_by_time.setdefault(
+                key,
+                {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
+            )
+            row[record.get_field()] = record.get_value()
+    finally:
+        influx.close()
 
-    tables = query_api.query_stream(query)
-    by_date = defaultdict(float)
-    for record in tables:
-        date = record.values.get('date', '')
-        load = record.get_value() or 0
-        if date:
-            by_date[date] += float(load)
+    recent_workouts = _dedupe_workouts(
+        sorted(
+            workouts_by_time.values(),
+            key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+            reverse=True,
+        )
+    )
 
-    return [{"date": d, "load": l} for d, l in sorted(by_date.items())]
+    # Overlay the local recent-workouts cache, which may contain newer workouts
+    # than the current stable Influx workout stream.
+    _load_recent_workouts_cache_from_disk()
+    with _recent_workouts_lock:
+        cached_workouts = list(_recent_workouts_cache.get("data") or [])
+    if cached_workouts:
+        recent_workouts = _dedupe_workouts(
+            sorted(
+                recent_workouts + cached_workouts,
+                key=lambda x: (x.get("date", ""), x.get("start_time", "")),
+                reverse=True,
+            )
+        )
+
+    by_date: dict[str, float] = {}
+    for workout in recent_workouts:
+        date = workout.get("date", "")
+        if not date:
+            continue
+        load = workout.get("suffer_score")
+        if load is None:
+            load = workout.get("relative_effort")
+        try:
+            load_val = float(load or 0.0)
+        except (TypeError, ValueError):
+            load_val = 0.0
+        by_date[date] = by_date.get(date, 0.0) + load_val
+    return [{"date": d, "load": by_date[d]} for d in sorted(by_date)]
+
+
+def _fetch_daily_loads_from_strava(query_days=120, end_date: str | None = None):
+    """Fallback PMC loader using Strava activities when Influx is unstable."""
+    if not getattr(strava, "is_configured", False):
+        return []
+    try:
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else datetime.now().date()
+    except ValueError:
+        end_dt = datetime.now().date()
+    today = datetime.now().date()
+    days_back = max(0, (today - end_dt).days)
+    fetch_days = max(query_days + days_back + 7, query_days)
+    activities = strava.get_activities(fetch_days)
+    if not activities:
+        return []
+    start_dt = end_dt - timedelta(days=query_days - 1)
+    by_date: dict[str, float] = {}
+    for activity in activities:
+        ds = activity.get("date")
+        if not ds or ds < start_dt.isoformat() or ds > end_dt.isoformat():
+            continue
+        load = activity.get("suffer_score")
+        if load is None:
+            load = activity.get("relative_effort")
+        try:
+            load_val = float(load or 0.0)
+        except (TypeError, ValueError):
+            load_val = 0.0
+        by_date[ds] = by_date.get(ds, 0.0) + load_val
+    return [{"date": d, "load": by_date[d]} for d in sorted(by_date)]
+
+
+def _fetch_daily_loads_from_recent_cache(query_days=120, end_date: str | None = None):
+    """Fast local fallback using the on-disk recent workouts cache."""
+    _load_recent_workouts_cache_from_disk()
+    with _recent_workouts_lock:
+        workouts = list(_recent_workouts_cache.get("data") or [])
+    if not workouts:
+        return []
+    try:
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else datetime.now().date()
+    except ValueError:
+        end_dt = datetime.now().date()
+    start_dt = end_dt - timedelta(days=query_days - 1)
+    workouts = _dedupe_workouts(
+        sorted(workouts, key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    )
+    by_date: dict[str, float] = {}
+    for workout in workouts:
+        ds = workout.get("date")
+        if not ds or ds < start_dt.isoformat() or ds > end_dt.isoformat():
+            continue
+        load = workout.get("suffer_score")
+        if load is None:
+            load = workout.get("relative_effort")
+        try:
+            load_val = float(load or 0.0)
+        except (TypeError, ValueError):
+            load_val = 0.0
+        by_date[ds] = by_date.get(ds, 0.0) + load_val
+    return [{"date": d, "load": by_date[d]} for d in sorted(by_date)]
+
+
+def _resolve_pmc_daily_loads(query_days: int, end_date_str: str) -> tuple[list[dict], str]:
+    cached_loads, stale, cache_source = _get_pmc_daily_loads_from_cache(query_days, end_date_str)
+    if cached_loads:
+        if stale:
+            _refresh_pmc_daily_loads_async(max(365, query_days), end_date_str)
+        return cached_loads, cache_source or "pmc_cache"
+
+    if getattr(strava, "is_configured", False):
+        try:
+            daily_loads = _fetch_daily_loads_from_strava(max(365, query_days), end_date_str)
+            if daily_loads:
+                _store_pmc_daily_loads_cache(daily_loads, "strava")
+                return _filter_daily_loads_window(daily_loads, query_days, end_date_str), "strava"
+        except Exception as e:
+            logger.error(f"PMC Strava fallback error: {e}")
+
+    try:
+        daily_loads = _fetch_daily_loads_from_recent_cache(query_days, end_date_str)
+        if daily_loads:
+            return daily_loads, "recent_workouts_cache"
+    except Exception as e:
+        logger.error(f"PMC local cache error: {e}")
+
+    try:
+        daily_loads = _fetch_daily_loads_from_influx(query_days, end_date_str)
+        if daily_loads:
+            return daily_loads, "influx"
+    except Exception as e:
+        logger.error(f"PMC Influx error: {e}")
+
+    return [], "none"
+
+
+def _build_pmc_payload(days: int, end_date_str: str, user: dict | None = None) -> dict:
+    started_at = perf_counter()
+    try:
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        end_date = datetime.now().date()
+        end_date_str = end_date.isoformat()
+
+    query_days = max(days + 42, PMC_MIN_LOOKBACK_DAYS)
+    daily_loads, source = _resolve_pmc_daily_loads(query_days, end_date_str)
+    if not daily_loads:
+        _log_perf("PMC", started_at, source=source, rows=0, end_date=end_date_str)
+        return {"error": "No training load data available", "source": source}
+
+    loads_map = {d["date"]: float(d.get("load", 0.0)) for d in daily_loads}
+    start_date = end_date - timedelta(days=query_days - 1)
+    full_series = []
+    cur = start_date
+    while cur <= end_date:
+        full_series.append({"date": cur.isoformat(), "load": loads_map.get(cur.isoformat(), 0.0)})
+        cur += timedelta(days=1)
+
+    params = _get_pmc_params_for_user(user)
+    pmc_series = calculate_pmc_series(
+        full_series,
+        ctl_days=params["ctl_days"],
+        atl_days=params["atl_days"],
+        load_scale_factor=params["load_scale_factor"],
+        tsb_lag_days=params.get("tsb_lag_days", 0),
+        seed_mode=params.get("seed_mode", "zeros"),
+    )
+    pmc_recent = pmc_series[-days:]
+    latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
+    payload = {
+        "ctl": latest["ctl"],
+        "atl": latest["atl"],
+        "tsb": latest["tsb"],
+        "status": get_status_description(latest["tsb"]),
+        "description": get_status_description(latest["tsb"]),
+        "pmc_params": params,
+        "days_tracked": len(full_series),
+        "source": source,
+        "chart": {
+            "dates": [d["date"] for d in pmc_recent],
+            "ctl": [d["ctl"] for d in pmc_recent],
+            "atl": [d["atl"] for d in pmc_recent],
+            "tsb": [d["tsb"] for d in pmc_recent],
+        }
+    }
+    _log_perf("PMC", started_at, source=source, rows=len(daily_loads), end_date=end_date_str)
+    return payload
 
 def _dash_fetch_health_today(target_date: str) -> dict:
     """Fetch health metrics for a date. Returns dict for dashboard. Thread-safe."""
@@ -1685,6 +2164,7 @@ def _dash_fetch_health_today(target_date: str) -> dict:
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
+          |> filter(fn: (r) => r._field == "sleep_duration_hours" or r._field == "deep_sleep_hours" or r._field == "rem_sleep_hours" or r._field == "light_sleep_hours" or r._field == "awake_hours" or r._field == "hrv_avg" or r._field == "resting_hr" or r._field == "avg_sleep_hr" or r._field == "sleep_efficiency" or r._field == "sleep_score" or r._field == "steps" or r._field == "recovery_score" or r._field == "training_load" or r._field == "weight")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         result = query_api.query_data_frame(query)
@@ -1695,27 +2175,46 @@ def _dash_fetch_health_today(target_date: str) -> dict:
         if result.empty or "date" not in result.columns:
             return {"error": "No data from InfluxDB"}
         df = result.copy()
-        numeric_cols = [c for c in ["sleep_duration_hours", "hrv_avg", "resting_hr", "steps", "recovery_score", "training_load", "weight"] if c in df.columns]
+        numeric_cols = [c for c in ["sleep_duration_hours", "deep_sleep_hours", "rem_sleep_hours", "light_sleep_hours", "awake_hours", "hrv_avg", "resting_hr", "avg_sleep_hr", "sleep_efficiency", "sleep_score", "steps", "recovery_score", "training_load", "weight"] if c in df.columns]
         for c in numeric_cols:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-        if numeric_cols:
-            df = df.groupby("date", as_index=False)[numeric_cols].mean()
-        else:
-            df = df[["date"]].drop_duplicates()
-        df = df.sort_values("date")
+        df = _reduce_daily_health_by_source(df, numeric_cols)
         target_row = df[df['date'] == target_date]
-        row = target_row.iloc[0] if not target_row.empty else df.iloc[-1]
+        row = target_row.iloc[0] if not target_row.empty else pd.Series(dtype=object)
         def clean(v):
             return None if pd.isna(v) else float(v)
         def get(col):
             return clean(row[col]) if col in row.index else None
         steps_val = get("steps")
+        if steps_val is None:
+            previous_date = (target_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+            previous_row = df[df["date"] == previous_date] if "date" in df.columns else pd.DataFrame()
+            if not previous_row.empty and "steps" in previous_row.columns:
+                previous_steps = previous_row.iloc[0].get("steps")
+                if not pd.isna(previous_steps):
+                    steps_val = float(previous_steps)
+                    steps_source_date = previous_date
+                else:
+                    steps_source_date = None
+            else:
+                steps_source_date = None
+        else:
+            steps_source_date = target_date
         return {
-            "date": row.get("date", target_date),
+            "date": target_date,
+            "source_date": row.get("date") if not row.empty else None,
             "sleep_hours": get("sleep_duration_hours"),
+            "deep_sleep_hours": get("deep_sleep_hours"),
+            "rem_sleep_hours": get("rem_sleep_hours"),
+            "light_sleep_hours": get("light_sleep_hours"),
+            "awake_hours": get("awake_hours"),
             "hrv": get("hrv_avg"),
             "resting_hr": get("resting_hr"),
+            "avg_sleep_hr": get("avg_sleep_hr"),
+            "sleep_efficiency": get("sleep_efficiency"),
+            "sleep_score": get("sleep_score"),
             "steps": None if steps_val is None else int(float(steps_val)),
+            "steps_source_date": steps_source_date,
             "recovery_score": get("recovery_score"),
             "training_load": get("training_load")
         }
@@ -1735,6 +2234,7 @@ def _dash_fetch_health_history(days: int, end_date: str) -> dict:
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {(end_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "daily_health")
+          |> filter(fn: (r) => r._field == "hrv_avg" or r._field == "resting_hr" or r._field == "avg_sleep_hr" or r._field == "sleep_duration_hours" or r._field == "deep_sleep_hours" or r._field == "rem_sleep_hours" or r._field == "light_sleep_hours" or r._field == "awake_hours" or r._field == "sleep_efficiency" or r._field == "sleep_score" or r._field == "recovery_score" or r._field == "steps" or r._field == "weight" or r._field == "active_calories" or r._field == "total_calories")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         result = query_api.query_data_frame(query)
@@ -1748,26 +2248,23 @@ def _dash_fetch_health_history(days: int, end_date: str) -> dict:
             has_daily_health = True
         if has_daily_health and "date" in result.columns:
             df = result.copy()
-            numeric_cols = [c for c in ["hrv_avg", "resting_hr", "sleep_duration_hours", "recovery_score", "steps", "weight"] if c in df.columns]
+            numeric_cols = [c for c in ["hrv_avg", "resting_hr", "avg_sleep_hr", "sleep_duration_hours", "deep_sleep_hours", "rem_sleep_hours", "light_sleep_hours", "awake_hours", "sleep_efficiency", "sleep_score", "recovery_score", "steps", "weight", "active_calories", "total_calories"] if c in df.columns]
             if numeric_cols:
                 for c in numeric_cols:
                     df[c] = pd.to_numeric(df[c], errors="coerce")
-                df = df.groupby("date", as_index=False)[numeric_cols].mean()
-            else:
-                df = df[["date"]].drop_duplicates()
-            df = df.sort_values("date").tail(days)
-            dates_list = df["date"].tolist()
+            df = _reduce_daily_health_by_source(df, numeric_cols)
+            df = pd.DataFrame({"date": dates_list}).merge(df, on="date", how="left")
         else:
             df = pd.DataFrame({"date": dates_list})
         def clean_series(s, d=2):
             return [None if pd.isna(v) else round(float(v), d) for v in s.tolist()]
-        manual_data = {f: {} for f in ['weight', 'hrv', 'sleep', 'resting_hr', 'steps']}
+        manual_data = {f: {} for f in ['weight', 'hrv', 'sleep', 'resting_hr', 'steps', 'calories']}
         try:
             manual_query = f'''
             from(bucket: "{INFLUXDB_BUCKET}")
-              |> range(start: -{days}d)
+              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {(end_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
               |> filter(fn: (r) => r._measurement == "manual_values")
-              |> filter(fn: (r) => r._field == "weight" or r._field == "hrv" or r._field == "sleep" or r._field == "resting_hr" or r._field == "steps")
+              |> filter(fn: (r) => r._field == "weight" or r._field == "hrv" or r._field == "sleep" or r._field == "resting_hr" or r._field == "steps" or r._field == "calories")
               |> filter(fn: (r) => r.deleted != "true")
             '''
             for table in query_api.query(manual_query):
@@ -1780,20 +2277,37 @@ def _dash_fetch_health_history(days: int, end_date: str) -> dict:
             pass
         def merge(auto, manual_dict, dates):
             return [manual_dict.get(d) if manual_dict.get(d) is not None else (auto[i] if i < len(auto) else None) for i, d in enumerate(dates)]
-        dates_list = df["date"].tolist()
         hrv_a = clean_series(df["hrv_avg"], 2) if "hrv_avg" in df else [None] * len(dates_list)
         rhr_a = clean_series(df["resting_hr"], 2) if "resting_hr" in df else [None] * len(dates_list)
         sleep_a = clean_series(df["sleep_duration_hours"], 2) if "sleep_duration_hours" in df else [None] * len(dates_list)
+        deep_sleep_a = clean_series(df["deep_sleep_hours"], 2) if "deep_sleep_hours" in df else [None] * len(dates_list)
+        rem_sleep_a = clean_series(df["rem_sleep_hours"], 2) if "rem_sleep_hours" in df else [None] * len(dates_list)
+        light_sleep_a = clean_series(df["light_sleep_hours"], 2) if "light_sleep_hours" in df else [None] * len(dates_list)
+        awake_a = clean_series(df["awake_hours"], 2) if "awake_hours" in df else [None] * len(dates_list)
+        avg_sleep_hr_a = clean_series(df["avg_sleep_hr"], 2) if "avg_sleep_hr" in df else [None] * len(dates_list)
+        sleep_efficiency_a = clean_series(df["sleep_efficiency"], 2) if "sleep_efficiency" in df else [None] * len(dates_list)
+        sleep_score_a = clean_series(df["sleep_score"], 2) if "sleep_score" in df else [None] * len(dates_list)
         steps_a = clean_series(df["steps"], 0) if "steps" in df else [None] * len(dates_list)
         weight_a = clean_series(df["weight"], 2) if "weight" in df else [None] * len(dates_list)
+        active_cal_a = clean_series(df["active_calories"], 0) if "active_calories" in df else [None] * len(dates_list)
+        total_cal_a = clean_series(df["total_calories"], 0) if "total_calories" in df else [None] * len(dates_list)
+        calories_a = [a if a is not None else total_cal_a[i] for i, a in enumerate(active_cal_a)]
         return {
             "dates": dates_list,
             "hrv": merge(hrv_a, manual_data['hrv'], dates_list),
             "resting_hr": merge(rhr_a, manual_data['resting_hr'], dates_list),
             "sleep": merge(sleep_a, manual_data['sleep'], dates_list),
+            "deep_sleep": deep_sleep_a,
+            "rem_sleep": rem_sleep_a,
+            "light_sleep": light_sleep_a,
+            "awake": awake_a,
+            "avg_sleep_hr": avg_sleep_hr_a,
+            "sleep_efficiency": sleep_efficiency_a,
+            "sleep_score": sleep_score_a,
             "recovery": clean_series(df["recovery_score"], 1) if "recovery_score" in df else [],
             "steps": merge(steps_a, manual_data['steps'], dates_list),
-            "weight": merge(weight_a, manual_data['weight'], dates_list)
+            "weight": merge(weight_a, manual_data['weight'], dates_list),
+            "calories": merge(calories_a, manual_data['calories'], dates_list)
         }
     except Exception as e:
         logger.error(f"Dashboard health_history error: {e}")
@@ -1816,45 +2330,8 @@ def _dash_fetch_recommendations(date: str, user: dict | None = None) -> dict:
 
 def _dash_fetch_pmc(days: int, end_date_str: str, user: dict | None = None) -> dict:
     """Fetch PMC data. Thread-safe."""
-    if not query_api:
-        return {"error": "No training load data from InfluxDB"}
     try:
-        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
-        query_days = max(days + 42, PMC_MIN_LOOKBACK_DAYS)
-        daily_loads = _fetch_daily_loads_from_influx(query_days)
-        if not daily_loads:
-            return {"error": "No training load data from InfluxDB"}
-        loads_map = {d["date"]: float(d.get("load", 0.0)) for d in daily_loads}
-        start_date = end_date - timedelta(days=query_days - 1)
-        full_series = []
-        cur = start_date
-        while cur <= end_date:
-            full_series.append({"date": cur.isoformat(), "load": loads_map.get(cur.isoformat(), 0.0)})
-            cur += timedelta(days=1)
-        params = _get_pmc_params_for_user(user)
-        pmc_series = calculate_pmc_series(
-            full_series,
-            ctl_days=params["ctl_days"],
-            atl_days=params["atl_days"],
-            load_scale_factor=params["load_scale_factor"],
-            tsb_lag_days=params.get("tsb_lag_days", 0),
-            seed_mode=params.get("seed_mode", "zeros"),
-        )
-        pmc_recent = pmc_series[-days:]
-        latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
-        return {
-            "ctl": latest["ctl"], "atl": latest["atl"], "tsb": latest["tsb"],
-            "status": get_status_description(latest["tsb"]),
-            "description": get_status_description(latest["tsb"]),
-            "pmc_params": params,
-            "days_tracked": len(full_series),
-            "chart": {
-                "dates": [d["date"] for d in pmc_recent],
-                "ctl": [d["ctl"] for d in pmc_recent],
-                "atl": [d["atl"] for d in pmc_recent],
-                "tsb": [d["tsb"] for d in pmc_recent],
-            }
-        }
+        return _build_pmc_payload(days, end_date_str, user)
     except Exception as e:
         logger.error(f"Dashboard PMC error: {e}")
         return {"error": str(e)}
@@ -1869,6 +2346,64 @@ def _dash_fetch_workouts(before_date: str, limit: int = 10) -> list | dict:
     except Exception as e:
         logger.error(f"Dashboard workouts error: {e}")
         return []
+
+
+def _get_calories_history(days: int, end_date: str, user: dict | None = None) -> dict:
+    """Build a calories series anchored to the selected end date."""
+    if user is None:
+        user = get_current_user()
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    dates = [(end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days - 1, -1, -1)]
+    history = _dash_fetch_health_history(days, end_date)
+    if isinstance(history, dict) and history.get("error"):
+        history = {"dates": dates, "steps": [None] * days, "weight": [None] * days}
+
+    weights_by_date = {}
+    steps_by_date = {}
+    for i, ds in enumerate(history.get("dates", dates)):
+        weights = history.get("weight", [])
+        steps = history.get("steps", [])
+        if i < len(weights):
+            weights_by_date[ds] = weights[i]
+        if i < len(steps):
+            steps_by_date[ds] = steps[i]
+
+    workouts = _fetch_workouts_limited(end_date, 500)
+    workouts_by_date: dict[str, list[dict]] = {}
+    for workout in workouts:
+        ds = workout.get("date")
+        if ds in set(dates):
+            workouts_by_date.setdefault(ds, []).append(workout)
+
+    series = []
+    for ds in dates:
+        weight_val = weights_by_date.get(ds)
+        if weight_val is None and user and user.get("initial_weight_kg") is not None:
+            weight_val = float(user["initial_weight_kg"])
+
+        bmr = None
+        if weight_val is not None:
+            bmr, _ = _get_bmr_calories_for_user(ds, user=user, weight_info={"weight": weight_val, "date": ds})
+
+        workout_total = 0.0
+        if weight_val is not None:
+            for workout in workouts_by_date.get(ds, []):
+                dur = workout.get("duration")
+                if dur is None:
+                    dur = workout.get("duration_minutes")
+                if dur is None:
+                    continue
+                workout_total += _estimate_workout_calories_from_duration(float(weight_val), float(dur), workout.get("type"))
+
+        step_total = _estimate_step_calories(steps_by_date.get(ds), weight_val)
+        total = None
+        if bmr is not None:
+            total = int(bmr + workout_total + step_total)
+        elif workout_total or step_total:
+            total = int(workout_total + step_total)
+        series.append(total)
+
+    return {"dates": dates, "calories": series}
 
 
 def _calculate_age(dob_str: str, target_date: datetime) -> int | None:
@@ -1934,37 +2469,57 @@ def _estimate_workout_calories_from_duration(weight_kg: float, duration_min: flo
     return met * weight_kg * hours
 
 
+def _fetch_exact_date_workouts(date: str, range_days: int = 14) -> list[dict]:
+    """Fetch de-duplicated workouts for one date from both workout measurements."""
+    if not INFLUXDB_TOKEN:
+        return []
+    try:
+        target_dt = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return []
+
+    influx = InfluxDBClient(
+        url=INFLUXDB_URL,
+        token=INFLUXDB_TOKEN,
+        org=INFLUXDB_ORG,
+        timeout=INFLUX_FAST_TIMEOUT_MS,
+    )
+    rows: dict[str, dict] = {}
+    needed_fields = (
+        'r._field == "calories" or r._field == "duration" or r._field == "duration_minutes" or '
+        'r._field == "name" or r._field == "start_time" or r._field == "strava_id"'
+    )
+    try:
+        local_query_api = influx.query_api()
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+          |> range(start: {(target_dt - timedelta(days=range_days)).strftime("%Y-%m-%dT00:00:00Z")}, stop: {(target_dt + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
+          |> filter(fn: (r) => r._measurement == "workouts" or r._measurement == "{WORKOUT_READ_MEASUREMENT}")
+          |> filter(fn: (r) => {needed_fields})
+          |> filter(fn: (r) => r.date == "{date}")
+        '''
+        for record in local_query_api.query_stream(query):
+            measurement = record.values.get("_measurement", "")
+            key = f"{measurement}:{record.get_time()}"
+            row = rows.setdefault(
+                key,
+                {"date": record.values.get("date", ""), "type": record.values.get("type", "")},
+            )
+            row[record.get_field()] = record.get_value()
+    finally:
+        influx.close()
+
+    records = sorted(rows.values(), key=lambda x: (x.get("date", ""), x.get("start_time", "")), reverse=True)
+    return _dedupe_workouts(records)
+
+
 def _get_workout_calories(date: str, weight_kg: float | None = None) -> float:
     """Sum workout calories for a date. If missing, estimate from duration."""
-    if not query_api:
+    if not INFLUXDB_TOKEN:
         return 0.0
-    # Pull calories + durations for the date and pivot to de-duplicate by workout
-    query = f'''
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -30d)
-      |> filter(fn: (r) => r._measurement == "{WORKOUT_READ_MEASUREMENT}")
-      |> filter(fn: (r) => r.date == "{date}")
-      |> drop(columns: ["date"])
-      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-      |> keep(columns: ["_time","type","start_time","calories","duration","duration_minutes"])
-    '''
-    result = query_api.query_data_frame(query)
-    if isinstance(result, list):
-        if len(result) == 0:
-            return 0.0
-        result = pd.concat(result, ignore_index=True)
-    if result.empty:
+    rows = _fetch_exact_date_workouts(date)
+    if not rows:
         return 0.0
-
-    # Deduplicate by date + type + start_time (fallback to _time)
-    seen = set()
-    rows = []
-    for row in result.to_dict(orient="records"):
-        key = (date, row.get("type"), row.get("start_time") or row.get("_time"))
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append(row)
 
     total = 0.0
     for row in rows:
@@ -1988,7 +2543,7 @@ def _get_workout_calories(date: str, weight_kg: float | None = None) -> float:
     return est_total
 
 
-def _get_bmr_calories_for_user(date: str, user: dict | None = None) -> tuple[float | None, dict]:
+def _get_bmr_calories_for_user(date: str, user: dict | None = None, weight_info: dict | None = None) -> tuple[float | None, dict]:
     """Return (bmr, meta) using user profile + weight for date."""
     if user is None:
         user = get_current_user()
@@ -2001,7 +2556,8 @@ def _get_bmr_calories_for_user(date: str, user: dict | None = None) -> tuple[flo
     if not dob or not height_cm:
         return None, {"reason": "missing_profile"}
 
-    weight_info = _get_weight_for_date(date)
+    if weight_info is None:
+        weight_info = _get_weight_for_date(date, user=user)
     weight_kg = weight_info.get("weight")
     if weight_kg is None:
         weight_kg = user.get("initial_weight_kg")
@@ -2026,48 +2582,44 @@ def _get_bmr_calories_for_user(date: str, user: dict | None = None) -> tuple[flo
     }
 
 
-def _dash_fetch_calories(date: str, user: dict | None = None) -> dict:
+def _dash_fetch_calories(date: str, user: dict | None = None, weight_info: dict | None = None) -> dict:
     """Fetch calories. Thread-safe."""
     if not query_api:
         return {"calories": 0, "date": date}
     try:
-        bmr, meta = _get_bmr_calories_for_user(date, user=user)
+        bmr, meta = _get_bmr_calories_for_user(date, user=user, weight_info=weight_info)
         weight_for_workouts = meta.get("weight_kg") if bmr is not None else None
         workout_total = _get_workout_calories(date, weight_for_workouts)
+        activity = _get_daily_activity_snapshot(date)
+        active_val = activity.get("active_calories")
+        total_val = activity.get("total_calories")
+        steps_val = activity.get("steps")
+        step_total = _estimate_step_calories(steps_val, weight_for_workouts)
         if bmr is not None:
-            total = bmr + workout_total if workout_total > 0 else bmr
+            if total_val is not None and total_val > 0:
+                total = total_val
+                source = "apple_health_total"
+            else:
+                activity_total = max(float(active_val or 0.0), float(workout_total or 0.0) + float(step_total or 0.0))
+                total = bmr + activity_total if activity_total > 0 else bmr
+                if active_val is not None and active_val > 0:
+                    source = "bmr+apple_active"
+                elif workout_total > 0 or step_total > 0:
+                    source = "bmr+activity"
+                else:
+                    source = "bmr"
             return {
                 "calories": int(total),
                 "date": date,
-                "source": "bmr+workouts" if workout_total > 0 else "bmr",
+                "source": source,
                 "bmr": round(bmr, 1),
-                "workout_calories": int(workout_total)
+                "workout_calories": int(workout_total),
+                "step_calories": int(step_total),
+                "steps": int(steps_val) if steps_val is not None else None,
+                "active_calories": int(active_val) if active_val is not None else None,
             }
 
         # Fallback to Apple Health if profile missing
-        target_dt = datetime.strptime(date, "%Y-%m-%d")
-        start_dt = target_dt - timedelta(days=1)
-        stop_dt = target_dt + timedelta(days=1)
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT23:59:59Z")})
-          |> filter(fn: (r) => r._measurement == "daily_health")
-          |> filter(fn: (r) => r.date == "{date}")
-          |> filter(fn: (r) => r._field == "active_calories" or r._field == "total_calories")
-          |> last()
-        '''
-        active_val = None
-        total_val = None
-        for table in query_api.query(query):
-            for rec in table.records:
-                field = rec.get_field()
-                val = rec.get_value()
-                if val is None:
-                    continue
-                if field == "active_calories":
-                    active_val = float(val)
-                elif field == "total_calories":
-                    total_val = float(val)
         if active_val is not None:
             return {"calories": int(active_val), "date": date, "source": "apple_health_active", "missing_profile": meta}
         if total_val is not None:
@@ -2078,10 +2630,23 @@ def _dash_fetch_calories(date: str, user: dict | None = None) -> dict:
         return {"calories": 0, "date": date}
 
 
-def _get_weight_for_date(date: str) -> dict:
+def _get_weight_for_date(date: str, user: dict | None = None) -> dict:
     """Fetch weight for a date with manual override and caching."""
+    if user is None:
+        user = get_current_user()
+
+    profile_weight = None
+    if user:
+        try:
+            profile_weight = float(user.get("initial_weight_kg")) if user.get("initial_weight_kg") is not None else None
+        except Exception:
+            profile_weight = None
+
     if not query_api:
-        return {"weight": None, "date": date}
+        resp = {"weight": profile_weight, "date": date}
+        if profile_weight is not None:
+            resp["source"] = "profile"
+        return resp
 
     now = datetime.now()
     if date in _weight_cache:
@@ -2092,102 +2657,84 @@ def _get_weight_for_date(date: str) -> dict:
 
     try:
         target_dt = datetime.strptime(date, "%Y-%m-%d")
-        start_dt = target_dt - timedelta(days=7)
-        weight_start_dt = target_dt - timedelta(days=WEIGHT_LOOKBACK_DAYS)
+        start_dt = target_dt - timedelta(days=42)
         stop_dt = target_dt + timedelta(days=1)
-
-        # 1) Manual for this date
-        query = f'''
+        manual_query = f'''
         from(bucket: "{INFLUXDB_BUCKET}")
           |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
           |> filter(fn: (r) => r._measurement == "manual_values")
-          |> filter(fn: (r) => r._field == "weight")
           |> filter(fn: (r) => r.date == "{date}")
-          |> sort(columns: ["_time"], desc: true)
-          |> limit(n: 1)
-          |> filter(fn: (r) => r.deleted != "true")
-        '''
-        for table in query_api.query(query):
-            for rec in table.records:
-                v = rec.get_value()
-                if v is not None:
-                    resp = {"weight": float(v), "source": "manual", "date": date}
-                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
-                    return resp
-
-        # 2) daily_health for this date
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
-          |> filter(fn: (r) => r._measurement == "daily_health")
           |> filter(fn: (r) => r._field == "weight")
-          |> filter(fn: (r) => r.date == "{date}")
-          |> last()
-        '''
-        for table in query_api.query(query):
-            for rec in table.records:
-                v = rec.get_value()
-                if v is not None:
-                    resp = {"weight": float(v), "source": "auto", "date": date}
-                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
-                    return resp
-
-        # 3) Most recent daily_health on/before date (42-day window)
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
-          |> filter(fn: (r) => r._measurement == "daily_health")
-          |> filter(fn: (r) => r._field == "weight")
-          |> filter(fn: (r) => r.date <= "{date}")
-          |> group()
+          |> group(columns: ["_field"])
           |> sort(columns: ["_time"], desc: true)
           |> limit(n: 1)
         '''
-        for table in query_api.query(query):
+        for table in query_api.query(manual_query):
             for rec in table.records:
-                v = rec.get_value()
-                if v is not None:
-                    resp = {"weight": float(v), "source": "auto", "date": rec.values.get("date", date)}
+                if rec.values.get("deleted") == "true":
+                    resp = {"weight": None, "date": date}
+                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                    return resp
+                val = rec.get_value()
+                if val is not None:
+                    resp = {"weight": float(val), "source": "manual", "date": date}
                     _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
                     return resp
 
-        # 4) Most recent manual on/before date (42-day window)
-        query = f'''
-        from(bucket: "{INFLUXDB_BUCKET}")
-          |> range(start: {weight_start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
-          |> filter(fn: (r) => r._measurement == "manual_values")
-          |> filter(fn: (r) => r._field == "weight")
-          |> filter(fn: (r) => r.date <= "{date}")
-          |> group()
-          |> sort(columns: ["_time"], desc: true)
-          |> limit(n: 1)
-          |> filter(fn: (r) => r.deleted != "true")
-        '''
-        for table in query_api.query(query):
-            for rec in table.records:
-                v = rec.get_value()
-                if v is not None:
-                    resp = {"weight": float(v), "source": "manual", "date": rec.values.get("date", date)}
-                    _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
-                    return resp
+        influx = InfluxDBClient(
+            url=INFLUXDB_URL,
+            token=INFLUXDB_TOKEN,
+            org=INFLUXDB_ORG,
+            timeout=INFLUX_FAST_TIMEOUT_MS,
+        )
+        try:
+            local_query_api = influx.query_api()
+            auto_query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: {start_dt.strftime("%Y-%m-%dT00:00:00Z")}, stop: {stop_dt.strftime("%Y-%m-%dT00:00:00Z")})
+              |> filter(fn: (r) => r._measurement == "daily_health")
+              |> filter(fn: (r) => r._field == "weight")
+            '''
+            candidates = []
+            for rec in local_query_api.query_stream(auto_query):
+                rec_date = rec.values.get("date", "")
+                if not rec_date or rec_date > date:
+                    continue
+                val = rec.get_value()
+                if val is None:
+                    continue
+                candidates.append((rec_date, rec.get_time(), float(val)))
+            if candidates:
+                rec_date, _ts, val = max(candidates, key=lambda item: (item[0], item[1]))
+                resp = {"weight": val, "source": "auto", "date": rec_date}
+                _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
+                return resp
+        finally:
+            influx.close()
 
-        resp = {"weight": None, "date": date}
+        resp = {"weight": profile_weight, "date": date}
+        if profile_weight is not None:
+            resp["source"] = "profile"
         _weight_cache[date] = (resp, now + timedelta(seconds=CACHE_TTL_SECONDS))
         return resp
     except Exception as e:
         logger.error(f"Weight fetch error: {e}")
-        return {"weight": None, "date": date}
+        resp = {"weight": profile_weight, "date": date}
+        if profile_weight is not None:
+            resp["source"] = "profile"
+        return resp
 
 
-def _dash_fetch_weight(date: str) -> dict:
+def _dash_fetch_weight(date: str, user: dict | None = None) -> dict:
     """Fetch weight for dashboard. Thread-safe."""
-    return _get_weight_for_date(date)
+    return _get_weight_for_date(date, user=user)
 
 
 @app.route('/api/dashboard/quick')
 @login_required
 def api_dashboard_quick():
     """Phase 1: fast data - health, recommendation, calories, weight. Renders first."""
+    started_at = perf_counter()
     date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
     user = get_current_user()
     now = datetime.now()
@@ -2197,12 +2744,11 @@ def api_dashboard_quick():
         if now < expires:
             return jsonify(cached)
         del _dashboard_cache[cache_key]
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         futures = {
             ex.submit(_dash_fetch_health_today, date): "health",
             ex.submit(_dash_fetch_recommendations, date, user): "recommendation",
-            ex.submit(_dash_fetch_calories, date, user): "calories",
-            ex.submit(_dash_fetch_weight, date): "weight",
+            ex.submit(_dash_fetch_weight, date, user): "weight",
         }
         out = {}
         for fut in as_completed(futures):
@@ -2212,7 +2758,9 @@ def api_dashboard_quick():
             except Exception as e:
                 logger.error(f"Dashboard quick {key} error: {e}")
                 out[key] = {"error": str(e)}
-    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=CACHE_TTL_SECONDS))
+    out["calories"] = _dash_fetch_calories(date, user, weight_info=out.get("weight"))
+    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=DASHBOARD_CACHE_TTL_SECONDS))
+    _log_perf("dashboard.quick", started_at, date=date)
     return jsonify(out)
 
 
@@ -2220,6 +2768,7 @@ def api_dashboard_quick():
 @login_required
 def api_dashboard_charts():
     """Phase 2: charts - health history, PMC. Loads after quick."""
+    started_at = perf_counter()
     date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
     days = request.args.get('days', 10, type=int)
     now = datetime.now()
@@ -2230,20 +2779,19 @@ def api_dashboard_charts():
             return jsonify(cached)
         del _dashboard_cache[cache_key]
     user = get_current_user()
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        futures = {
-            ex.submit(_dash_fetch_health_history, days, date): "history",
-            ex.submit(_dash_fetch_pmc, days, date, user): "pmc",
-        }
-        out = {}
-        for fut in as_completed(futures):
-            key = futures[fut]
-            try:
-                out[key] = fut.result()
-            except Exception as e:
-                logger.error(f"Dashboard charts {key} error: {e}")
-                out[key] = {"error": str(e)}
-    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=CACHE_TTL_SECONDS))
+    out = {}
+    try:
+        out["history"] = _dash_fetch_health_history(days, date)
+    except Exception as e:
+        logger.error(f"Dashboard charts history error: {e}")
+        out["history"] = {"error": str(e)}
+    try:
+        out["pmc"] = _dash_fetch_pmc(days, date, user)
+    except Exception as e:
+        logger.error(f"Dashboard charts pmc error: {e}")
+        out["pmc"] = {"error": str(e)}
+    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=DASHBOARD_CACHE_TTL_SECONDS))
+    _log_perf("dashboard.charts", started_at, date=date, pmc_source=out.get("pmc", {}).get("source"))
     return jsonify(out)
 
 
@@ -2251,6 +2799,7 @@ def api_dashboard_charts():
 @login_required
 def api_dashboard():
     """Combined endpoint: all dashboard data in one response. Queries run in parallel."""
+    started_at = perf_counter()
     date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
     days = request.args.get('days', 10, type=int)  # 10-day window for fast loads
     user = get_current_user()
@@ -2263,15 +2812,14 @@ def api_dashboard():
         del _dashboard_cache[cache_key]
     out = {}
     user = get_current_user()
-    with ThreadPoolExecutor(max_workers=7) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         futures = {
             ex.submit(_dash_fetch_health_today, date): "health",
             ex.submit(_dash_fetch_health_history, days, date): "history",
             ex.submit(_dash_fetch_recommendations, date, user): "recommendation",
             ex.submit(_dash_fetch_pmc, days, date, user): "pmc",
             ex.submit(_dash_fetch_workouts, date, 10): "workouts",
-            ex.submit(_dash_fetch_calories, date, user): "calories",
-            ex.submit(_dash_fetch_weight, date): "weight",
+            ex.submit(_dash_fetch_weight, date, user): "weight",
         }
         for fut in as_completed(futures):
             key = futures[fut]
@@ -2280,7 +2828,9 @@ def api_dashboard():
             except Exception as e:
                 logger.error(f"Dashboard {key} error: {e}")
                 out[key] = {"error": str(e)} if key != "workouts" else []
-    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=CACHE_TTL_SECONDS))
+    out["calories"] = _dash_fetch_calories(date, user, weight_info=out.get("weight"))
+    _dashboard_cache[cache_key] = (out, now + timedelta(seconds=DASHBOARD_CACHE_TTL_SECONDS))
+    _log_perf("dashboard.full", started_at, date=date, pmc_source=out.get("pmc", {}).get("source"))
     return jsonify(out)
 
 
@@ -2293,19 +2843,23 @@ def pmc():
     """
     days = request.args.get('days', 90, type=int)
     end_date_str = request.args.get('end_date', datetime.now().strftime("%Y-%m-%d"))
-    query_days = max(days + 42, PMC_MIN_LOOKBACK_DAYS)  # Smaller window for speed
-    
-    # Parse end_date
     try:
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
     except ValueError:
         end_date = datetime.now().date()
+        end_date_str = end_date.isoformat()
     
     is_today = end_date == datetime.now().date()
     
     # Check cache first (only use cache if querying for today)
     now = datetime.now()
-    if is_today and _pmc_cache["data"] and _pmc_cache["expires"] and now < _pmc_cache["expires"]:
+    if (
+        is_today
+        and _pmc_cache["data"]
+        and _pmc_cache["expires"]
+        and now < _pmc_cache["expires"]
+        and len(_pmc_cache["data"].get("pmc_series", [])) >= days
+    ):
         logger.info("Returning cached PMC data")
         cached = _pmc_cache["data"]
         # Return cached data but slice to requested days
@@ -2318,7 +2872,9 @@ def pmc():
             "atl": latest["atl"],
             "tsb": latest["tsb"],
             "status": get_status_description(latest["tsb"]),
+            "description": get_status_description(latest["tsb"]),
             "pmc_params": params,
+            "source": cached.get("source", "pmc_memory_cache"),
             "chart": {
                 "dates": [d["date"] for d in pmc_recent],
                 "ctl": [d["ctl"] for d in pmc_recent],
@@ -2326,68 +2882,27 @@ def pmc():
                 "tsb": [d["tsb"] for d in pmc_recent],
             }
         })
-    
-    logger.info("Fetching PMC data from InfluxDB")
-    daily_loads = []
-    
-    if query_api:
-        try:
-            daily_loads = _fetch_daily_loads_from_influx(query_days)
-            logger.info(f"Loaded {len(daily_loads)} days of training load from InfluxDB")
-        except Exception as e:
-            logger.error(f"Error fetching PMC data from InfluxDB: {e}")
-    
-    # No mock data - return error if nothing from InfluxDB
-    if not daily_loads:
-        return jsonify({"error": "No training load data from InfluxDB"}), 404
-    
-    # Build continuous daily load series (fill missing days with zero load),
-    # then compute CTL/ATL/TSB series for charting.
-    loads_map = {d["date"]: float(d.get("load", 0.0)) for d in daily_loads}
-    start_date = end_date - timedelta(days=query_days - 1)
-
-    full_series = []
-    cur = start_date
-    while cur <= end_date:
-        ds = cur.isoformat()
-        full_series.append({"date": ds, "load": loads_map.get(ds, 0.0)})
-        cur += timedelta(days=1)
-
     user = get_current_user()
-    params = _get_pmc_params_for_user(user)
-    pmc_series = calculate_pmc_series(
-        full_series,
-        ctl_days=params["ctl_days"],
-        atl_days=params["atl_days"],
-        load_scale_factor=params["load_scale_factor"],
-        tsb_lag_days=params.get("tsb_lag_days", 0),
-        seed_mode=params.get("seed_mode", "zeros"),
-    )
+    payload = _build_pmc_payload(days, end_date_str, user)
+    if payload.get("error"):
+        return jsonify(payload), 404
     
     # Update cache only if querying for today
     if is_today:
-        _pmc_cache["data"] = {"pmc_series": pmc_series}
-        _pmc_cache["expires"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
-
-    pmc_recent = pmc_series[-days:]
-    latest = pmc_recent[-1] if pmc_recent else {"ctl": 0, "atl": 0, "tsb": 0}
-    status = get_status_description(latest["tsb"])
-    
-    return jsonify({
-        "ctl": latest["ctl"],
-        "atl": latest["atl"],
-        "tsb": latest["tsb"],
-        "status": status,
-        "description": status,
-        "pmc_params": params,
-        "days_tracked": len(full_series),
-        "chart": {
-            "dates": [d["date"] for d in pmc_recent],
-            "ctl": [d["ctl"] for d in pmc_recent],
-            "atl": [d["atl"] for d in pmc_recent],
-            "tsb": [d["tsb"] for d in pmc_recent],
+        _pmc_cache["data"] = {
+            "pmc_series": [
+                {"date": d, "ctl": c, "atl": a, "tsb": t}
+                for d, c, a, t in zip(
+                    payload["chart"]["dates"],
+                    payload["chart"]["ctl"],
+                    payload["chart"]["atl"],
+                    payload["chart"]["tsb"],
+                )
+            ],
+            "source": payload.get("source", "unknown"),
         }
-    })
+        _pmc_cache["expires"] = now + timedelta(seconds=PMC_CACHE_TTL_SECONDS)
+    return jsonify(payload)
 
 
 @app.route('/api/trends')
@@ -2419,5 +2934,9 @@ def trends():
 
 
 if __name__ == '__main__':
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    cached_loads, stale, _source = _get_pmc_daily_loads_from_cache(PMC_MIN_LOOKBACK_DAYS, today_str)
+    if getattr(strava, "is_configured", False) and (not cached_loads or stale):
+        _refresh_pmc_daily_loads_async(max(365, PMC_MIN_LOOKBACK_DAYS), today_str)
     logger.info(f"Starting Health Dashboard on port {FLASK_PORT}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)

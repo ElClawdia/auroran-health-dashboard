@@ -8,6 +8,7 @@ import os
 import requests
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Dict, Optional
 
 class StravaClient:
@@ -15,16 +16,35 @@ class StravaClient:
     
     BASE_URL = "https://www.strava.com/api/v3"
     TOKEN_URL = "https://www.strava.com/oauth/token"
+    LOCAL_TOKEN_FILE = Path(__file__).parent / "renew-strava-tokens" / "strava_tokens.json"
+    LOCAL_SECRETS_FILE = Path(__file__).parent / "renew-strava-tokens" / "secrets.json"
     
     def __init__(self, access_token: str = "", client_id: str = "", client_secret: str = "", refresh_token: str = ""):
-        self.access_token = access_token or os.getenv('STRAVA_ACCESS_TOKEN', '')
-        self.client_id = client_id or os.getenv('STRAVA_CLIENT_ID', '')
-        self.client_secret = client_secret or os.getenv('STRAVA_CLIENT_SECRET', '')
-        self.refresh_token = refresh_token or os.getenv('STRAVA_REFRESH_TOKEN', '')
+        local_tokens = self._load_local_tokens()
+        self.token_file = self.LOCAL_TOKEN_FILE if self.LOCAL_TOKEN_FILE.exists() else None
+        self.access_token = access_token or os.getenv('STRAVA_ACCESS_TOKEN', '') or local_tokens.get("access_token", "")
+        self.client_id = client_id or os.getenv('STRAVA_CLIENT_ID', '') or local_tokens.get("client_id", "")
+        self.client_secret = client_secret or os.getenv('STRAVA_CLIENT_SECRET', '') or local_tokens.get("client_secret", "")
+        self.refresh_token = refresh_token or os.getenv('STRAVA_REFRESH_TOKEN', '') or local_tokens.get("refresh_token", "")
+
+    def _load_local_tokens(self) -> Dict:
+        out: Dict[str, str] = {}
+        try:
+            if self.LOCAL_TOKEN_FILE.exists():
+                out.update(json.loads(self.LOCAL_TOKEN_FILE.read_text()))
+            if self.LOCAL_SECRETS_FILE.exists():
+                secrets = json.loads(self.LOCAL_SECRETS_FILE.read_text())
+                if secrets.get("client_id"):
+                    out["client_id"] = secrets["client_id"]
+                if secrets.get("client_secret"):
+                    out["client_secret"] = secrets["client_secret"]
+        except Exception:
+            pass
+        return out
     
     @property
     def is_configured(self) -> bool:
-        return bool(self.access_token)
+        return bool(self.access_token) or bool(self.refresh_token and self.client_id and self.client_secret)
     
     def refresh_access_token(self) -> bool:
         """Refresh the access token using refresh_token"""
@@ -40,13 +60,27 @@ class StravaClient:
                     "client_secret": self.client_secret,
                     "grant_type": "refresh_token",
                     "refresh_token": self.refresh_token
-                }
+                },
+                timeout=15,
             )
             
             if response.status_code == 200:
                 data = response.json()
                 self.access_token = data.get("access_token", "")
                 self.refresh_token = data.get("refresh_token", "")
+                if self.token_file:
+                    try:
+                        current = {}
+                        if self.token_file.exists():
+                            current = json.loads(self.token_file.read_text())
+                        current.update({
+                            "access_token": self.access_token,
+                            "refresh_token": self.refresh_token,
+                            "expires_at": data.get("expires_at"),
+                        })
+                        self.token_file.write_text(json.dumps(current, indent=2))
+                    except Exception:
+                        pass
                 print(f"✓ Strava token refreshed successfully")
                 return True
             else:
@@ -68,7 +102,8 @@ class StravaClient:
                 headers={
                     "Authorization": f"Bearer {self.access_token}",
                     "Content-Type": "application/json"
-                }
+                },
+                timeout=20,
             )
             
             if response.status_code == 200:
@@ -83,7 +118,8 @@ class StravaClient:
                         headers={
                             "Authorization": f"Bearer {self.access_token}",
                             "Content-Type": "application/json"
-                        }
+                        },
+                        timeout=20,
                     )
                     if response.status_code == 200:
                         return response.json()
@@ -178,7 +214,7 @@ class StravaClient:
         if write_api and activities:
             from influxdb_client import Point
             for activity in activities:
-                point = Point("workouts")\
+                point = Point("workout_cache")\
                     .tag("type", activity.get("type", "Unknown"))\
                     .tag("date", activity.get("date", ""))\
                     .field("duration_minutes", float(activity.get("duration", 0)))\

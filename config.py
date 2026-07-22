@@ -64,6 +64,11 @@ STRAVA_REFRESH_TOKEN = get_secret('strava_refresh_token', '')
 _strava_ok = bool(STRAVA_ACCESS_TOKEN) or (STRAVA_REFRESH_TOKEN and STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET)
 logger.debug(f"Strava configured: {_strava_ok}")
 
+# Oura API Configuration
+OURA_CLIENT_ID = get_secret('oura_client_id', '')
+OURA_CLIENT_SECRET = get_secret('oura_client_secret', '')
+OURA_REDIRECT_URI = get_secret('oura_redirect_uri', 'http://localhost:8080/callback')
+
 # Garmin (no personal API - sync via Strava recommended)
 GARMIN_USERNAME = get_secret('garmin_username', '')
 GARMIN_PASSWORD = get_secret('garmin_password', '')

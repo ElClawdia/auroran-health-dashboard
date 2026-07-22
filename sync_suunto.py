@@ -432,7 +432,7 @@ def write_to_influx(
         for w in workouts:
             time_dt = parse_dt(w.get("start_time")) or date_to_utc_midnight(w["date"])
             point = (
-                Point("workouts")
+                Point("workout_cache")
                 .tag("type", str(w.get("type", "Workout")))
                 .tag("date", w["date"])
                 .tag("source", SOURCE_TAG)

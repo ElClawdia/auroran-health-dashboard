@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sync Fitbit data (weight, steps, sleep, resting HR) to InfluxDB daily_health.
+Sync Fitbit weight to InfluxDB daily_health.
 
 Setup:
 1. Register app at https://dev.fitbit.com/apps/new (type: Personal)
@@ -32,7 +32,7 @@ from fitbit_client import FitbitClient
 
 
 def sync_fitbit_to_influxdb(days: int = 7) -> bool:
-    """Fetch Fitbit data and write to InfluxDB daily_health."""
+    """Fetch Fitbit weight and write to InfluxDB daily_health."""
     client_id = get_secret("fitbit_client_id", "")
     client_secret = get_secret("fitbit_client_secret", "")
     token_file = Path(__file__).parent / "fitbit_tokens.json"
@@ -94,49 +94,10 @@ def sync_fitbit_to_influxdb(days: int = 7) -> bool:
                     pass
         chunk_start = chunk_end + timedelta(days=1)
 
-    # Build daily payload: weight + steps + sleep + resting_hr
+    # Build daily payload: Fitbit is only authoritative for weight.
     daily: dict[str, dict] = defaultdict(dict)
     for dt_str, w in weight_by_date.items():
         daily[dt_str]["weight"] = round(w, 2)
-
-    # Fetch steps in chunks (max 1095 days per request)
-    chunk_start = today - timedelta(days=days)
-    while chunk_start <= today:
-        chunk_end = min(chunk_start + timedelta(days=1094), today)
-        for dt, steps in client.get_steps_range(
-            chunk_start.isoformat(), chunk_end.isoformat()
-        ).items():
-            if dt not in daily:
-                daily[dt] = {}
-            if steps is not None:
-                daily[dt]["steps"] = steps
-        chunk_start = chunk_end + timedelta(days=1)
-
-    # Fetch sleep in chunks (max 100 days per request)
-    chunk_start = today - timedelta(days=days)
-    while chunk_start <= today:
-        chunk_end = min(chunk_start + timedelta(days=99), today)
-        for dt, hours in client.get_sleep_range(
-            chunk_start.isoformat(), chunk_end.isoformat()
-        ).items():
-            if dt not in daily:
-                daily[dt] = {}
-            if hours:
-                daily[dt]["sleep_duration_hours"] = round(hours, 3)
-        chunk_start = chunk_end + timedelta(days=1)
-
-    # Fetch resting HR in chunks (max 365 days per request)
-    chunk_start = today - timedelta(days=days)
-    while chunk_start <= today:
-        chunk_end = min(chunk_start + timedelta(days=364), today)
-        for dt, rhr in client.get_resting_hr_range(
-            chunk_start.isoformat(), chunk_end.isoformat()
-        ).items():
-            if dt not in daily:
-                daily[dt] = {}
-            if rhr is not None:
-                daily[dt]["resting_hr"] = round(rhr, 2)
-        chunk_start = chunk_end + timedelta(days=1)
 
     # Batch write to InfluxDB
     influx = InfluxDBClient(
@@ -153,7 +114,7 @@ def sync_fitbit_to_influxdb(days: int = 7) -> bool:
         ts = datetime.fromisoformat(date_str).replace(
             hour=12, minute=0, second=0, tzinfo=timezone.utc
         )
-        point = Point("daily_health").tag("date", date_str).time(ts)
+        point = Point("daily_health").tag("date", date_str).tag("source", "fitbit").time(ts)
         for key, val in fields.items():
             point = point.field(key, val)
         points.append(point)
@@ -176,7 +137,7 @@ def sync_fitbit_to_influxdb(days: int = 7) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Sync Fitbit data (weight, steps, sleep, resting HR) to InfluxDB.",
+        description="Sync Fitbit weight to InfluxDB.",
         epilog="""
 Setup:
   1. Register app: https://dev.fitbit.com/apps/new (Personal)
@@ -188,7 +149,7 @@ Examples:
   ./sync_fitbit.py
       Sync last 7 days (default).
   ./sync_fitbit.py --days 365
-      Sync full year (weight, steps, sleep, resting HR).
+      Sync full year of weight logs.
   ./sync_fitbit.py --days 1095
       Sync ~3 years of history.
         """,

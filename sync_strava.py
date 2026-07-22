@@ -112,7 +112,7 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
         query_api = influxdb.query_api()
         # Use range that matches our sync - extend for full historical syncs
         range_days = min(max(fetch_days + 30, 365), 4000)  # 4000d ~ 11 years
-        existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -{range_days}d) |> filter(fn: (r) => r._measurement == "workouts") |> filter(fn: (r) => r._field == "strava_id")'
+        existing_query = f'from(bucket: "{INFLUXDB_BUCKET}") |> range(start: -{range_days}d) |> filter(fn: (r) => r._measurement == "workout_cache") |> filter(fn: (r) => r._field == "strava_id")'
         try:
             result = query_api.query(existing_query)
             existing_ids = set()
@@ -168,26 +168,6 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
                         suffer_score=None,
                     ) if dur > 0 else 0.0
                 
-                # Write to both measurements: workouts (legacy) and workout_cache (optimized)
-                point = Point("workouts")\
-                    .tag("type", activity.get("type", "Unknown"))\
-                    .tag("date", date)\
-                    .field("strava_id", strava_id)\
-                    .field("date", date)\
-                    .field("start_time", time)\
-                    .field("duration", to_float(activity.get("duration")))\
-                    .field("distance", to_float(activity.get("distance")))\
-                    .field("elevation_gain", to_float(activity.get("elevation_gain")))\
-                    .field("avg_hr", to_float(activity.get("avg_hr")))\
-                    .field("max_hr", to_float(activity.get("max_hr")))\
-                    .field("suffer_score", to_float(ss))\
-                    .field("calories", to_float(activity.get("calories")))\
-                    .field("name", activity.get("name", ""))\
-                    .time(activity_ts)
-                
-                write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
-                
-                # Also write to workout_cache (optimized for faster queries)
                 cache_point = Point("workout_cache")\
                     .tag("type", activity.get("type", "Unknown"))\
                     .tag("date", date)\
