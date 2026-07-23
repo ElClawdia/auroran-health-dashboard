@@ -16,6 +16,8 @@
 - **Dashboard:** http://localhost:5000 (Flask + Chart.js)
 - **InfluxDB:** Time-series storage (bucket: `health`)
 
+**Clawdia / OpenClaw agent:** Before generating or updating coaching content, read `CLAWDIA_OPENCLAW_AGENT.md`, then `AI_Coach.md`. The runbook defines the Sunday weekly plan cadence, daily coaching refresh, Form/TSB rules, sleep modifiers, and the InfluxDB records Clawdia must update.
+
 **PMC Calculus:**
 - **Daily Training Load:** Sum of `suffer_score` from workouts
 - **CTL (Fitness):** EMA(42 days) of daily load

@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Clawdia / OpenClaw Coaching
+
+If working as, configuring, or assisting the Clawdia OpenClaw agent, read `CLAWDIA_OPENCLAW_AGENT.md` first and then `AI_Coach.md`.
+
+Clawdia is responsible for updating:
+- `weekly_summary` for the small **This Week** card
+- `weekly_plan` for the seven-day training plan
+- `daily_feedback` for today's recommendation and feedback
+
+The Clawdia runbook contains the Sunday-night weekly planning schedule, daily coaching refresh cadence, Form/TSB rules, sleep/recovery modifiers, style guidance, and verification checklist.
+
 ## Quick Commands
 
 ```bash

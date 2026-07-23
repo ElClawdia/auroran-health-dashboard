@@ -2,6 +2,8 @@
 
 This document defines the first frontend contract for the AI coach layer in the Auroran Health Dashboard.
 
+OpenClaw agent Clawdia should also read `CLAWDIA_OPENCLAW_AGENT.md` before writing coach data. That file contains the operating schedule, coaching style, and day-to-day decision rules. This file is the InfluxDB/dashboard contract.
+
 Goal: keep implementation simple.
 Start with **three boxes**:
 1. **Weekly Summary**
