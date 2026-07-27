@@ -1189,7 +1189,7 @@
             } catch (_) { }
             updateWorkouts(workouts, isStale && workouts.length === 0);
             document.getElementById('last-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-            if (workouts.length > 0) {
+            if (!isStale && workouts.length > 0) {
                 workoutsRetryCount = 0;
                 return;
             }

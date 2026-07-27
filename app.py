@@ -433,6 +433,8 @@ def _get_recent_workouts_from_cache(before_date: str | None, limit: int):
         stale = False
     max_date = max((w.get("date", "") for w in data), default="")
     # If cache doesn't cover the requested date range, keep refreshing
+    if max_date and max_date < target:
+        stale = True
     if (not filtered) and max_date and target <= max_date:
         stale = True
     if len(filtered) < limit:

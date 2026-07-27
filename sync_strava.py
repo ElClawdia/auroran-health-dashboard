@@ -197,7 +197,7 @@ def sync_strava_to_influxdb(days=None, force=False, newer_than=None):
             recent_workouts = {}
             cache_query = f'''
             from(bucket: \"{INFLUXDB_BUCKET}\")
-              |> range(start: -42d)
+              |> range(start: -42d, stop: 2d)
               |> filter(fn: (r) => r._measurement == \"workout_cache\")
               |> filter(fn: (r) => r.date >= \"{cutoff}\")
             '''
